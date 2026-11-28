@@ -6,6 +6,7 @@ import { resolveEnv } from "@llamactl/core/env";
 import { resolve } from "node:path";
 
 import type { ValidateParkedCredit } from "../residency/admission-authority.js";
+import type { ManagedLaunchAdmission } from "../residency/managed-launch-admission.js";
 
 import { createDurableInferenceHolds } from "../residency/inference-holds.js";
 import { readLocalManagedCapacity } from "../residency/local-managed-capacity.js";
@@ -113,6 +114,18 @@ function stageNativeOmlxOwner(
   );
 }
 
+function withNativeOmlxOperators(
+  admission: ManagedLaunchAdmission,
+  owner: ReturnType<typeof stageNativeOmlxOwner>,
+): ManagedLaunchAdmission {
+  if (owner === undefined) return admission;
+  return {
+    ...admission,
+    setNativeOmlxResidency: owner.setNativeResidency.bind(owner),
+    verifyParkedOmlxProbe: owner.verifyParked,
+  };
+}
+
 export async function startManagedAgentServer(
   opts: StartAgentOptions,
   nodeName: string | undefined,
@@ -160,6 +173,15 @@ export async function startManagedAgentServer(
       aroundOwnedLifecycle: nativeOwner?.run,
     });
     authority = runtime.authority;
+    nativeOwner?.configureParking({
+      authority: runtime.authority,
+      readLimits: () => runtime.readNativeWakeLimits(),
+      readInferenceHold: (name) => inferenceHolds.state(name),
+      verifyOwner: (workload) =>
+        journals.verify() === undefined &&
+        runtime.authority.isOperational() &&
+        runtime.admission.allowsProfileServing?.(workload) === true,
+    });
     const refusal = runtime.verifyActivation();
     if (refusal !== undefined) throw new Error(refusal);
     openResidencyOperationStore({
@@ -183,7 +205,7 @@ export async function startManagedAgentServer(
       ...cold,
       nodeName,
       residencyLeases: true,
-      managedLaunchAdmission: runtime.admission,
+      managedLaunchAdmission: withNativeOmlxOperators(runtime.admission, nativeOwner),
       managedInferenceHolds: inferenceHolds,
       selectManagedEngineTransport: deps.selectEngineTransport ?? nativeOwner?.select,
       selectManagedEngineReadiness: nativeOwner?.readiness,

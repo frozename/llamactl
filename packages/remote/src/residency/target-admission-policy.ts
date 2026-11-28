@@ -38,6 +38,7 @@ import type {
   ManagedStopProof,
   ValidateParkedCredit,
 } from "./admission-authority.js";
+import type { NativeWakeLimits } from "./admission-store.js";
 import type { InferenceHolds, InferenceHoldState } from "./inference-holds.js";
 
 import { existsSync, mkdirSync, readFileSync, statSync } from "../safe-fs.js";
@@ -856,6 +857,7 @@ interface NodeManagedAdmission {
   admission: ManagedLaunchAdmission;
   authority: AdmissionAuthority;
   readColdResidentGeneration: ColdResidentReader;
+  readNativeWakeLimits(): NativeWakeLimits | undefined;
   verifyActivation(): string | undefined;
 }
 
@@ -875,6 +877,18 @@ function verifyManagedActivation(
     if ("refusal" in measured) return measured.refusal;
   }
   return inspectRuntime();
+}
+
+function readNativeWakeLimits(
+  opts: NodeManagedAdmissionOptions,
+  physical: PhysicalPolicy | undefined,
+  inspectAllocation: () => string | undefined,
+): NativeWakeLimits | undefined {
+  if (inspectAllocation() !== undefined) return undefined;
+  const measured = physical?.measure();
+  if (measured === undefined) return undefined;
+  auditCapacity(opts, "launch", measured);
+  return "refusal" in measured ? undefined : measured;
 }
 
 export async function openNodeManagedAdmission(
@@ -991,6 +1005,7 @@ export async function openNodeManagedAdmission(
     },
     authority,
     readColdResidentGeneration: coldResidentReader(resolved, runtime, opts.verifyJournalPair),
+    readNativeWakeLimits: () => readNativeWakeLimits(opts, physical, inspectAllocation),
     verifyActivation: () =>
       verifyManagedActivation(opts, authority, physical, budgetGiB, inspectRuntime),
   };
