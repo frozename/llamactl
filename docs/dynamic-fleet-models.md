@@ -429,7 +429,12 @@ falls back to the fastest degraded row only when the machine has no such
 row, and the `promote-fastest-vision-model` runbook ranks a degraded rel
 behind every healthy rel, promoting a degraded rel only when every eligible
 rel is degraded. A degraded rel is demoted, not excluded: it stays eligible,
-unlike an experimental one.
+unlike an experimental one. Across nodes, a fusion node whose `modelId` fell
+back to a degraded rel is advertised at priority 9
+(`DEGRADED_NODE_PRIORITY`), behind every healthy bench band (1 to 8) and the
+unbenched default 5 and ahead of the cloud provider default 10, so the
+`preferLowerPriority` profiles prefer any node serving a healthy model; every
+degraded node shares that priority.
 
 `/v1/models?include=declared` reads the same stages: each `unavailable`
 entry's `qualification.stage` is the routing stage from
