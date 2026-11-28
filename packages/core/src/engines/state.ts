@@ -38,6 +38,7 @@ export interface ModelHostState {
   binaryNames?: string[];
   /** Declared serving probe (#220); absent = legacy behaviour. */
   readiness?: ModelHostReadiness;
+  requiresOwnerTransport?: true;
   /**
    * Transient systemd user scope the engine was launched into (#806), e.g.
    * `llamactl-engine-modelhost-1a2b3c4d5e6f.scope`. Written only on Linux
@@ -65,6 +66,7 @@ export function computeModelHostSpecHash(spec: {
   env?: Record<string, string> | undefined;
   apiKeyRef?: string | undefined;
   omlxCacheEpoch?: number | undefined;
+  omlxNativeResidency?: "v0.8.4" | undefined;
 }): string {
   return JSON.stringify({
     engine: spec.engine,
@@ -78,6 +80,9 @@ export function computeModelHostSpecHash(spec: {
     env: spec.env ?? null,
     ...(spec.apiKeyRef !== undefined ? { apiKeyRef: spec.apiKeyRef } : {}),
     ...(spec.omlxCacheEpoch !== undefined ? { omlxCacheEpoch: spec.omlxCacheEpoch } : {}),
+    ...(spec.omlxNativeResidency !== undefined
+      ? { omlxNativeResidency: spec.omlxNativeResidency }
+      : {}),
   });
 }
 
@@ -242,6 +247,16 @@ function validModelAliases(modelAliases: unknown): modelAliases is string[] {
   );
 }
 
+function ownerTransportFields(
+  parsed: Partial<ModelHostState>,
+): Pick<ModelHostState, "readiness" | "requiresOwnerTransport"> {
+  const readiness = isModelHostReadiness(parsed.readiness) ? parsed.readiness : undefined;
+  if (parsed.engine === "omlx" && parsed.requiresOwnerTransport === true) {
+    return { readiness: readiness ?? { path: "/health" }, requiresOwnerTransport: true };
+  }
+  return readiness === undefined ? {} : { readiness };
+}
+
 function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState | null {
   if (parsed.kind !== "ModelHost") return null;
   const { engine, host, modelAliases, pid, port, startedAt, binaryNames } = parsed;
@@ -262,7 +277,7 @@ function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState
     slotSavePath: typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null,
     ...(typeof parsed.specHash === "string" ? { specHash: parsed.specHash } : {}),
     ...(validBinaryNames(binaryNames) ? { binaryNames: [...binaryNames] } : {}),
-    ...(isModelHostReadiness(parsed.readiness) ? { readiness: parsed.readiness } : {}),
+    ...ownerTransportFields(parsed),
     ...(isScopeUnit(parsed.scopeUnit) ? { scopeUnit: parsed.scopeUnit } : {}),
   };
 }

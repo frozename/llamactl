@@ -3,8 +3,16 @@ import type { OkPlan } from "@llamactl/core/residency/planner";
 import type { ManagedProfileSelection } from "@llamactl/core/residency/profile-selection";
 import type { ManagedMemoryCalibrationKey } from "@llamactl/core/resources/memory";
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import type { VerifyParkedOmlxProbe } from "../server/modelhost.js";
-import type { AdmissionAuthority, AdmitRequest, GenerationRecord } from "./admission-authority.js";
+import type {
+  AdmissionAuthority,
+  AdmitRequest,
+  AuthorityClaimRow,
+  GenerationRecord,
+  NativeRuntimeGeneration,
+} from "./admission-authority.js";
 import type { DirectLifecycleOutcome } from "./direct-lifecycle.js";
 import type { InferenceHoldState } from "./inference-holds.js";
 
@@ -103,6 +111,7 @@ interface ManagedLaunchOptions {
     | "failUncertain"
     | "abandonUnstarted"
     | "prepareStopRelease"
+    | "snapshot"
   >;
   inspectRuntime?: () => string | undefined;
   // The approved spec must account for the complete invocation.
@@ -151,6 +160,96 @@ function recordLaunchGeneration(
   );
 }
 
+interface ManagedNativeLaunchTicket {
+  runtime: NativeRuntimeGeneration;
+  current(): boolean;
+  processCurrent: () => boolean;
+}
+
+type BindNativeLaunch = (pid: number) => ManagedNativeLaunchTicket | undefined;
+const nativeLaunchScope = new AsyncLocalStorage<{
+  workload: string;
+  select: () => BindNativeLaunch;
+}>();
+
+export function managedNativeLaunch(workload: string): BindNativeLaunch | undefined {
+  const active = nativeLaunchScope.getStore();
+  return active?.workload === workload ? active.select() : undefined;
+}
+
+function nativeLaunchTicket(
+  opts: ManagedLaunchOptions,
+  request: ManagedLaunchRequest,
+  claim: AdmittedClaim,
+  signal: AbortSignal,
+): {
+  select: () => BindNativeLaunch;
+  selected(): boolean;
+  recorded(): ManagedNativeLaunchTicket | undefined;
+  close(): void;
+} {
+  let issued: ManagedNativeLaunchTicket | undefined;
+  let closed = false;
+  let selected = false;
+  let attempted = false;
+  const pending = (): AuthorityClaimRow | undefined =>
+    opts.authority
+      .snapshot()
+      .find(
+        (row) =>
+          row.claimId === claim.claimId &&
+          row.fenceToken === claim.fenceToken &&
+          row.runtimeKey === request.runtimeKey &&
+          row.kind === "ModelHost" &&
+          row.state === "pending",
+      );
+  const bind: BindNativeLaunch = (pid) => {
+    if (closed || signal.aborted) return undefined;
+    if (issued !== undefined) {
+      return issued.runtime.pid === pid && issued.current() ? issued : undefined;
+    }
+    if (attempted) return undefined;
+    attempted = true;
+    const row = pending();
+    const generation = opts.capture(request, pid);
+    if (
+      row?.generations.length !== 0 ||
+      !generation?.birthId ||
+      generation.pid !== pid ||
+      !opts.authority.recordGeneration(claim.claimId, claim.fenceToken, generation)
+    )
+      return undefined;
+    const { birthId } = generation;
+    const processCurrent = (): boolean => opts.capture(request, pid)?.birthId === birthId;
+    issued = {
+      processCurrent,
+      runtime: { workload: request.runtimeKey, specDigest: row.specDigest, pid, birthId },
+      current(): boolean {
+        const row = pending();
+        return (
+          !closed &&
+          !signal.aborted &&
+          row?.generations.some((known) => known.pid === pid && known.birthId === birthId) ===
+            true &&
+          processCurrent()
+        );
+      },
+    };
+    return issued;
+  };
+  return {
+    select(): BindNativeLaunch {
+      selected = true;
+      return bind;
+    },
+    selected: () => selected,
+    recorded: () => issued,
+    close(): void {
+      closed = true;
+    },
+  };
+}
+
 function settlePreDispatchRefusal<T extends LaunchResult>(
   outcome: DirectLifecycleOutcome<T>,
 ): DirectLifecycleOutcome<T> {
@@ -158,6 +257,28 @@ function settlePreDispatchRefusal<T extends LaunchResult>(
     return outcome;
   }
   return refuse(outcome.result.preDispatchRefusal);
+}
+
+function verifyReadyGeneration(
+  opts: ManagedLaunchOptions,
+  request: ManagedLaunchRequest,
+  claim: AdmittedClaim,
+  pid: number,
+  native: ReturnType<typeof nativeLaunchTicket> | undefined,
+): boolean {
+  if (native?.selected() !== true) return recordLaunchGeneration(opts, request, claim, pid);
+  const ticket = native.recorded();
+  return ticket?.runtime.pid === pid && ticket.current();
+}
+
+function startWithNativeTicket<T>(
+  native: ReturnType<typeof nativeLaunchTicket> | undefined,
+  workload: string,
+  start: () => T,
+): T {
+  return native === undefined
+    ? start()
+    : nativeLaunchScope.run({ workload, select: native.select }, start);
 }
 
 async function runClaimedLaunch<T extends LaunchResult>(
@@ -168,6 +289,8 @@ async function runClaimedLaunch<T extends LaunchResult>(
   start: (commitReadiness: CommitLaunchReadiness) => Promise<DirectLifecycleOutcome<T>>,
 ): Promise<DirectLifecycleOutcome<T>> {
   const claim = { claimId, fenceToken };
+  const native =
+    request.kind === "ModelHost" ? nativeLaunchTicket(opts, request, claim, signal) : undefined;
   let capturedPid: number | undefined;
   let committedPid: number | undefined;
   let abandoned = false;
@@ -176,7 +299,9 @@ async function runClaimedLaunch<T extends LaunchResult>(
       return committedPid === pid ? undefined : "ManagedReadyUnverified";
     }
     if (signal.aborted) return "LaunchCanceled";
-    if (!recordLaunchGeneration(opts, request, claim, pid)) return "ManagedGenerationUnverified";
+    if (!verifyReadyGeneration(opts, request, claim, pid, native)) {
+      return "ManagedGenerationUnverified";
+    }
     capturedPid = pid;
     if (!opts.authority.completeReady(claimId, fenceToken)) return "ManagedReadyUnverified";
     committedPid = pid;
@@ -184,7 +309,9 @@ async function runClaimedLaunch<T extends LaunchResult>(
   };
   try {
     const outcome = settlePreDispatchRefusal(
-      signal.aborted ? refuse("LaunchCanceled") : await start(commitReadiness),
+      signal.aborted
+        ? refuse("LaunchCanceled")
+        : await startWithNativeTicket(native, request.runtimeKey, () => start(commitReadiness)),
     );
     if (!outcome.ran) {
       abandoned =
@@ -196,11 +323,17 @@ async function runClaimedLaunch<T extends LaunchResult>(
       return pid === committedPid ? outcome : refuse("ManagedReadyUnverified");
     }
     const failedPid = pid ?? spawnedPid;
-    if (committedPid === undefined && failedPid !== undefined && failedPid !== capturedPid) {
+    if (
+      committedPid === undefined &&
+      failedPid !== undefined &&
+      failedPid !== capturedPid &&
+      native?.selected() !== true
+    ) {
       recordLaunchGeneration(opts, request, claim, failedPid);
     }
     return outcome;
   } finally {
+    native?.close();
     if (committedPid === undefined && !abandoned) {
       opts.authority.failUncertain(claimId, fenceToken, "launch outcome could not be committed");
     }

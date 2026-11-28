@@ -71,6 +71,8 @@ import {
   matchesLlamacppSleepGeneration,
   readLlamacppSleepResidency,
 } from "../residency/llamacpp-sleep-status.js";
+import { managedNativeLaunch } from "../residency/managed-launch-admission.js";
+import { connectOmlxOwnerSocket } from "../residency/omlx-owner-socket.js";
 import {
   closeSync,
   existsSync,
@@ -91,7 +93,13 @@ import {
   specForHash,
 } from "../workload/modelhost-schema.js";
 import { listModelHosts, loadModelHostByName, saveModelHost } from "../workload/modelhost-store.js";
-import { type OmlxCacheLaunch, prepareOmlxCacheLaunch } from "./omlx-cache-launch.js";
+import {
+  loadInitiallyOwnedOmlx,
+  type OmlxCacheLaunch,
+  prepareOmlxCacheLaunch,
+  prepareOmlxOwnerLaunch,
+} from "./omlx-cache-launch.js";
+import { currentNativeOmlxOwner } from "./omlx-native-owner.js";
 
 /**
  * Label marking ModelHosts that share exclusive memory on a node (#557 S5):
@@ -420,6 +428,7 @@ function resolveLsofPath(): string {
 function defaultFindListenerPid(
   endpoint: { host: string; port: number },
   signal?: AbortSignal,
+  requireUnique = false,
 ): Promise<number | null> {
   return new Promise((resolve) => {
     let settled = false;
@@ -443,7 +452,12 @@ function defaultFindListenerPid(
       // different address of the same port (e.g. 0.0.0.0 / ::1) is not matched.
       child = nodeSpawn(
         resolveLsofPath(),
-        ["-nP", `-iTCP@${endpoint.host}:${String(endpoint.port)}`, "-sTCP:LISTEN", "-t"],
+        [
+          "-nP",
+          `-iTCP@${formatHostForUrl(endpoint.host)}:${String(endpoint.port)}`,
+          "-sTCP:LISTEN",
+          "-t",
+        ],
         { stdio: ["ignore", "pipe", "ignore"] },
       );
       let out = "";
@@ -454,11 +468,11 @@ function defaultFindListenerPid(
         finish(null);
       });
       child.on("close", () => {
-        const pid = out
+        const pids = out
           .split(/\s+/)
           .map((token) => Number.parseInt(token, 10))
-          .find((value) => Number.isInteger(value) && value > 0);
-        finish(pid ?? null);
+          .filter((value) => Number.isInteger(value) && value > 0);
+        finish(requireUnique && new Set(pids).size !== 1 ? null : (pids[0] ?? null));
       });
     } catch {
       finish(null);
@@ -1652,16 +1666,16 @@ function modelHostBootEnv(
   };
 }
 
-function writeReadyModelHostState(
+function publishReadyModelHost(
   opts: StartModelHostOptions,
   manifest: ModelHostManifest,
-  resolved: ReturnType<typeof resolveEnv>,
-  spec: ModelHostSpecForEngine,
-  pid: number,
-  scoped: ModelHostScopeLaunch | null,
-  startSpecHash: string,
-  slotSavePath: string | null,
+  ctx: ModelHostLaunchContext,
+  runtime: { child: ChildProcess; pid: number; scoped: ModelHostScopeLaunch | null },
+  launch: { specHash: string; slotSavePath: string | null; publish(): void },
 ): void {
+  const { resolved, spec } = ctx;
+  const { child, pid, scoped } = runtime;
+  ensureSpawnedChildStillRunning(child, pid, manifest.spec.endpoint);
   const refusal = opts.commitReadiness?.(pid);
   if (refusal !== undefined) throw new Error(refusal);
   if (opts.commitReadiness !== undefined && opts.manifest !== undefined) {
@@ -1677,15 +1691,19 @@ function writeReadyModelHostState(
       port: endpoint.port,
       modelAliases: resolveModelAliases(manifest),
       startedAt: new Date().toISOString(),
-      slotSavePath,
-      specHash: startSpecHash,
+      slotSavePath: launch.slotSavePath,
+      specHash: launch.specHash,
       ...binaryNamesField(manifest.spec.binaryNames),
-      ...readinessField(spec.readiness),
+      ...(manifest.spec.omlxNativeResidency === undefined
+        ? readinessField(spec.readiness)
+        : { requiresOwnerTransport: true, readiness: ownedOmlxReadiness(manifest) }),
       ...scopeUnitField(scoped?.scopeUnit),
     },
     opts.key,
     resolved,
   );
+  launch.publish();
+  clearStartingRecordIfOwned(opts.key, resolved, pid);
 }
 
 // #806 phase 3: a scoped child that never exited (hung-unreaped) may still be
@@ -1698,7 +1716,28 @@ async function teardownFailedModelHostLaunch(
   startingPid: number | null,
   opts: StartModelHostOptions,
   resolved: ReturnType<typeof resolveEnv>,
+  nativeBoot: OwnedOmlxBoot | undefined,
 ): Promise<void> {
+  if (nativeBoot !== undefined) {
+    if (child === null || startingPid === null) return;
+    const exited = (): boolean =>
+      typeof child.exitCode === "number" || typeof child.signalCode === "string";
+    const verifyGeneration: NonNullable<PidIdentityDeps["verifyGeneration"]> = (pid) => {
+      if (pid !== startingPid) return "unknown";
+      if (exited()) return "dead";
+      return nativeBoot.ticket?.processCurrent() === true ? "alive" : "unknown";
+    };
+    if (verifyGeneration(startingPid) === "alive") {
+      await engine
+        .teardown(startingPid, {
+          recordPath: modelhostStartingFile(resolved, opts.key),
+          deps: { verifyGeneration },
+        })
+        .catch(() => undefined);
+    }
+    if (exited()) clearStartingRecordIfOwned(opts.key, resolved, startingPid);
+    return;
+  }
   await teardownChildSilently(child, engine);
   const keepStartingRecord =
     scoped !== null && child !== null && child.exitCode === null && child.signalCode === null;
@@ -1707,12 +1746,123 @@ async function teardownFailedModelHostLaunch(
   }
 }
 
+function nativeOmlxOwnerRefusal(
+  manifest: ModelHostManifest,
+  opts: StartModelHostOptions,
+): StartModelHostResult | undefined {
+  if (manifest.spec.omlxNativeResidency === undefined) return undefined;
+  if (
+    currentNativeOmlxOwner()?.canServe(manifest.spec.endpoint.port) === true &&
+    managedNativeLaunch(opts.key.name) !== undefined
+  )
+    return undefined;
+  return failedModelHostStart(
+    new Error("ManagedNativeOmlxOwnerUnavailable"),
+    undefined,
+    opts.commitReadiness !== undefined,
+  );
+}
+
+type OwnedOmlxBoot = {
+  auth: ReturnType<typeof prepareOmlxOwnerLaunch>;
+  bind: NonNullable<ReturnType<typeof managedNativeLaunch>>;
+  ticket?: NonNullable<ReturnType<OwnedOmlxBoot["bind"]>>;
+  owner: NonNullable<ReturnType<typeof currentNativeOmlxOwner>>;
+};
+
+function prepareOwnedOmlxBoot(
+  manifest: ModelHostManifest,
+  launch: ModelHostCommand,
+  childEnv: NodeJS.ProcessEnv,
+): OwnedOmlxBoot | undefined {
+  if (manifest.spec.omlxNativeResidency === undefined) return undefined;
+  const workload = manifest.metadata.name;
+  const owner = currentNativeOmlxOwner();
+  const bind = managedNativeLaunch(workload);
+  const model = manifest.spec.hostedModels[0];
+  if (owner === undefined || bind === undefined || model === undefined) {
+    throw new Error("ManagedNativeOmlxOwnerUnavailable");
+  }
+  const auth = prepareOmlxOwnerLaunch(launch, childEnv, model.rel);
+  owner.protect(workload);
+  return { auth, bind, owner };
+}
+
+function ownedOmlxReadiness(manifest: ModelHostManifest): ModelHostReadiness {
+  return normalizeReadiness(manifest.spec.readiness) ?? { path: "/health" };
+}
+
+async function awaitOwnedOmlxReadiness(
+  opts: StartModelHostOptions,
+  manifest: ModelHostManifest,
+  boot: OwnedOmlxBoot,
+  pid: number,
+  resolved: ReturnType<typeof resolveEnv>,
+): Promise<() => void> {
+  const ticket = boot.bind(pid);
+  if (ticket === undefined) throw new Error("ManagedNativeOmlxGenerationUnverified");
+  boot.ticket = ticket;
+  const { endpoint } = manifest.spec;
+  const { auth, owner } = boot;
+  const signal = AbortSignal.any([
+    AbortSignal.timeout((opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000),
+    ...(opts.signal === undefined ? [] : [opts.signal]),
+  ]);
+  while (
+    !signal.aborted &&
+    ticket.current() &&
+    (await defaultFindListenerPid(endpoint, signal, true)) !== pid
+  ) {
+    await Bun.sleep(100);
+  }
+  signal.throwIfAborted();
+  const readiness = ownedOmlxReadiness(manifest);
+  const connect = connectOmlxOwnerSocket(endpoint, pid, ticket.processCurrent);
+  const currentLaunch = (): boolean => ticket.current() && auth.verifyLaunchInputs();
+  const bootReady = await loadInitiallyOwnedOmlx({
+    binding: {
+      endpoint,
+      modelId: auth.modelId,
+      modelPath: auth.modelPath,
+      artifactRevision: auth.artifactRevision,
+      runtimeGeneration: ticket.runtime.birthId,
+      stillCurrent: ticket.processCurrent,
+    },
+    apiKey: auth.apiKey,
+    readiness,
+    verifyReservation: currentLaunch,
+    connect: connectOmlxOwnerSocket(endpoint, pid, currentLaunch),
+    admitLoad: () => opts.checkSpawn?.() === undefined && currentLaunch(),
+    signal,
+  });
+  if (!bootReady) throw new Error("ManagedNativeOmlxReadinessUnverified");
+  const specHash = computeModelHostSpecHash(specForHash(manifest.spec));
+  return (): void => {
+    owner.register(manifest.metadata.name, endpoint, auth.apiKey, readiness.path, connect, () => {
+      const state = readModelHostState(opts.key, resolved);
+      return (
+        state?.pid === pid &&
+        state.requiresOwnerTransport === true &&
+        state.specHash === specHash &&
+        state.host === endpoint.host &&
+        state.port === endpoint.port &&
+        auth.verify() &&
+        ticket.processCurrent()
+      );
+    });
+  };
+}
+
 async function prepareModelHostCommand(
   manifest: ModelHostManifest,
   workload: string,
   ctx: ModelHostLaunchContext,
   dispatch: { attempted: boolean },
-): Promise<{ launch: ModelHostCommand; childEnv: NodeJS.ProcessEnv }> {
+): Promise<{
+  launch: ModelHostCommand;
+  childEnv: NodeJS.ProcessEnv;
+  nativeBoot: OwnedOmlxBoot | undefined;
+}> {
   const { env, runtimeEnv, resolved, engine, spec, apiKey } = ctx;
   const boot = modelHostBootEnv(env, resolved, spec, workload);
   const slots = resolveSlotSavePathArgs(
@@ -1737,15 +1887,19 @@ async function prepareModelHostCommand(
             cacheEpoch,
           ),
         };
+  const nativeBoot = prepareOwnedOmlxBoot(manifest, launch, childEnv);
   return {
     launch: {
       ...launch,
       beforeDispatch(): void {
         launch.verifyCacheInputs?.();
+        if (nativeBoot !== undefined && !nativeBoot.auth.verifyLaunchInputs())
+          throw new Error("ManagedNativeOmlxInputsChanged");
         dispatch.attempted = true;
       },
     },
-    childEnv,
+    childEnv: nativeBoot?.auth.env ?? childEnv,
+    nativeBoot,
   };
 }
 
@@ -1761,6 +1915,44 @@ function failedModelHostStart(
     error: message,
     ...omitUndefined({ spawnedPid, preDispatchRefusal: cacheBeforeDispatch ? message : undefined }),
   };
+}
+
+async function modelHostLaunchReadiness(
+  opts: StartModelHostOptions,
+  manifest: ModelHostManifest,
+  ctx: ModelHostLaunchContext,
+  runtime: { child: ChildProcess; pid: number; scoped: ModelHostScopeLaunch | null },
+  native?: OwnedOmlxBoot,
+): Promise<() => void> {
+  if (native !== undefined)
+    return await awaitOwnedOmlxReadiness(opts, manifest, native, runtime.pid, ctx.resolved);
+  await awaitModelHostReadiness(
+    opts,
+    ctx.engine,
+    manifest,
+    ctx.spec,
+    runtime.child,
+    runtime.pid,
+    runtime.scoped,
+  );
+  return (): void => {
+    currentNativeOmlxOwner()?.clear(opts.key.name);
+  };
+}
+
+async function finishModelHostLaunch(
+  opts: StartModelHostOptions,
+  manifest: ModelHostManifest,
+  ctx: ModelHostLaunchContext,
+  runtime: { child: ChildProcess; pid: number; scoped: ModelHostScopeLaunch | null },
+  launch: { specHash: string; slotSavePath: string | null; nativeBoot: OwnedOmlxBoot | undefined },
+): Promise<void> {
+  const { specHash, slotSavePath, nativeBoot } = launch;
+  const publish = await modelHostLaunchReadiness(opts, manifest, ctx, runtime, nativeBoot);
+  if (nativeBoot !== undefined && !nativeBoot.auth.verifyLaunchInputs()) {
+    throw new Error("ManagedNativeOmlxInputsChanged");
+  }
+  publishReadyModelHost(opts, manifest, ctx, runtime, { specHash, slotSavePath, publish });
 }
 
 async function launchModelHost(
@@ -1786,21 +1978,20 @@ async function launchModelHost(
   let startingPid: number | null = null;
   let scoped: ModelHostScopeLaunch | null = null;
   const dispatch = { attempted: false };
+  let nativeBoot: OwnedOmlxBoot | undefined;
   let bootStdio: "ignore" | number = "ignore";
   const startSpecHash = computeModelHostSpecHash(specForHash(manifest.spec));
   try {
-    const { launch, childEnv } = await prepareModelHostCommand(
-      manifest,
-      opts.key.name,
-      ctx,
-      dispatch,
-    );
+    const prepared = await prepareModelHostCommand(manifest, opts.key.name, ctx, dispatch);
+    const { launch, childEnv } = prepared;
+    nativeBoot = prepared.nativeBoot;
     bootStdio = openBootLogFd(opts.key.name, resolved.LOCAL_AI_RUNTIME_DIR);
     // #806 phase 3: with a published launcher (Linux agents), try the scoped
     // launch first; every precondition failure falls through to the direct
     // spawn below unchanged.
     const attempt = await attemptScopedModelHostSpawn(
-      opts,
+      // Scoped launchers may serialize the child environment into their argv.
+      nativeBoot === undefined ? opts : { ...opts, engineScope: null },
       manifest,
       launch,
       childEnv,
@@ -1854,27 +2045,31 @@ async function launchModelHost(
     if (pid === null) {
       throw new Error("failed to spawn modelhost process");
     }
-    await awaitModelHostReadiness(opts, engine, manifest, spec, child, pid, scoped);
-
-    const endpoint = manifest.spec.endpoint;
-    ensureSpawnedChildStillRunning(child, pid, endpoint);
-    writeReadyModelHostState(
+    await finishModelHostLaunch(
       opts,
       manifest,
-      resolved,
-      spec,
-      pid,
-      scoped,
-      startSpecHash,
-      launch.slotSavePath,
+      ctx,
+      { child, pid, scoped },
+      {
+        specHash: startSpecHash,
+        slotSavePath: launch.slotSavePath,
+        nativeBoot,
+      },
     );
-    clearStartingRecordIfOwned(opts.key, resolved, pid);
     const result = { ok: true, pid };
     opts.onEvent?.({ type: "done", result });
     return result;
   } catch (error) {
     const spawnedPid = child?.pid;
-    await teardownFailedModelHostLaunch(child, engine, scoped, startingPid, opts, resolved);
+    await teardownFailedModelHostLaunch(
+      child,
+      engine,
+      scoped,
+      startingPid,
+      opts,
+      resolved,
+      nativeBoot,
+    );
     const result = failedModelHostStart(
       error,
       spawnedPid,
@@ -2066,8 +2261,13 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   // Refuse an exposed bind BEFORE any teardown: reapOrAdoptPriorHost would
   // otherwise kill a live host to make room for a spawn we then deny.
   const bindRefusal = modelHostBindRefusal(manifest);
-  if (bindRefusal !== null) {
-    const result = { ok: false, pid: null, error: bindRefusal };
+  const nativeRefusal = nativeOmlxOwnerRefusal(manifest, opts);
+  if (nativeRefusal !== undefined || bindRefusal !== null) {
+    const result = nativeRefusal ?? {
+      ok: false,
+      pid: null,
+      error: bindRefusal ?? "ModelHostBindRefused",
+    };
     opts.onEvent?.({ type: "done", result });
     return result;
   }

@@ -97,6 +97,7 @@ export interface NodeManagedAdmissionOptions {
   verifyJournalPair?: () => string | undefined;
   inferenceHolds?: InferenceHolds;
   validateParkedCredit?: ValidateParkedCredit | undefined;
+  aroundOwnedLifecycle?: (<T>(run: () => T) => T) | undefined;
 }
 
 function unresolvedInference(state: InferenceHoldState | undefined): boolean {
@@ -917,7 +918,7 @@ export async function openNodeManagedAdmission(
         opts.verifyJournalPair?.() === undefined &&
         runtime.authority.isOperational() &&
         (engineGate.getStore()?.mayEnter() ?? true),
-      run,
+      () => (opts.aroundOwnedLifecycle === undefined ? run() : opts.aroundOwnedLifecycle(run)),
     );
   const inspectRuntime = (): string | undefined =>
     opts.verifyJournalPair?.() ?? managedInventoryRefusal(resolved, runtime);

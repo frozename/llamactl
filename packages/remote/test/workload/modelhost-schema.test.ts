@@ -968,3 +968,27 @@ describe("spec.apiKeyRef (#214)", () => {
     expect(result.success).toBe(true);
   });
 });
+
+test("native oMLX residency pins private launch inputs and changes the runtime hash", () => {
+  const ordinary = { ...valid.spec, omlxCacheEpoch: 0 };
+  const native = { ...ordinary, omlxNativeResidency: "v0.8.4" };
+  const base = ModelHostManifestSchema.parse({ ...valid, spec: ordinary });
+  const candidate = ModelHostManifestSchema.safeParse({ ...valid, spec: native });
+  expect(candidate.success).toBe(true);
+  if (!candidate.success) return;
+  expect(computeModelHostSpecHash(specForHash(candidate.data.spec))).not.toBe(
+    computeModelHostSpecHash(specForHash(base.spec)),
+  );
+  for (const changed of [
+    { omlxCacheEpoch: undefined },
+    { endpoint: { host: "0.0.0.0", port: 8094 } },
+    { engine: "llamacpp" },
+    { extraArgs: ["--api-k", "fixture-caller-key"] },
+    { extraArgs: ["--host=0.0.0.0"] },
+    { env: { OMLX_SECRET_KEY: "fixture-caller-key" } },
+  ]) {
+    expect(
+      ModelHostManifestSchema.safeParse({ ...valid, spec: { ...native, ...changed } }).success,
+    ).toBe(false);
+  }
+});

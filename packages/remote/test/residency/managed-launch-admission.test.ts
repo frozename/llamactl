@@ -10,6 +10,7 @@ import {
   type CommitLaunchReadiness,
   createManagedLaunchAdmission,
   type ManagedLaunchRequest,
+  managedNativeLaunch,
 } from "../../src/residency/managed-launch-admission.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 
@@ -220,4 +221,105 @@ test("the ledger uses the runtime-derived digest when admission includes a pinne
   const prepared = { ...request, effectiveSpecDigest: "pinned-runtime-digest" };
   expect(await gate.run(prepared, signal, simulateRuntimeReady)).toEqual(ready);
   expect(f.authority.snapshot()).toMatchObject([{ specDigest: "pinned-runtime-digest" }]);
+});
+
+test("native boot binds one recorded generation while the managed reservation is pending", async () => {
+  using f = fixture();
+  const original = { pid: generation.pid, birthId: "fixture-born" };
+  let observed = original.birthId;
+  const gate = createManagedLaunchAdmission({
+    ...f,
+    capture: (_request, pid) => ({ pid, birthId: observed }),
+  });
+  const nativeRequest: ManagedLaunchRequest = {
+    kind: "ModelHost",
+    runtimeKey: "native",
+    launch: { manifest: {} },
+  };
+  const outcome = await gate.run(nativeRequest, signal, async (commit) => {
+    expect(managedNativeLaunch("different-workload")).toBeUndefined();
+    const bind = managedNativeLaunch("native");
+    expect(bind).toBeDefined();
+    if (bind === undefined) return { ran: false, detail: "NativeLaunchUnavailable" };
+    const issued = bind(original.pid);
+    if (issued === undefined) throw new Error("native fixture generation refused");
+    expect(issued.runtime).toEqual({
+      workload: "native",
+      specDigest: "approved-spec",
+      pid: original.pid,
+      birthId: original.birthId,
+    });
+    expect(issued.current()).toBe(true);
+    expect(f.authority.snapshot()).toMatchObject([
+      { state: "pending", allocationGiB: 16, generations: [original] },
+    ]);
+    expect(bind(original.pid + 1)).toBeUndefined();
+    observed = "replacement-born";
+    expect(issued.current()).toBe(false);
+    expect(commit(original.pid)).toBe("ManagedGenerationUnverified");
+    observed = original.birthId;
+    expect(commit(original.pid)).toBeUndefined();
+    expect(issued.current()).toBe(false);
+    return await Promise.resolve(ready);
+  });
+  expect(outcome).toEqual(ready);
+  expect(managedNativeLaunch("native")).toBeUndefined();
+});
+
+test("failed native boot never records a reused PID as its known generation", async () => {
+  using f = fixture();
+  let birthId = "native-fixture-birth";
+  const gate = createManagedLaunchAdmission({
+    ...f,
+    capture: (_request, pid) => ({ pid, birthId }),
+  });
+  const result = { ok: false, pid: null, spawnedPid: generation.pid };
+  expect(
+    await gate.run(
+      {
+        kind: "ModelHost",
+        runtimeKey: "native",
+        launch: { manifest: {} },
+      },
+      signal,
+      (): Promise<{ ran: true; result: typeof result }> => {
+        expect(managedNativeLaunch("native")?.(generation.pid)).toBeDefined();
+        birthId = "recycled-unrelated-process";
+        return Promise.resolve({ ran: true, result });
+      },
+    ),
+  ).toEqual({ ran: true, result });
+  expect(f.authority.snapshot()).toMatchObject([
+    {
+      state: "uncertain",
+      generations: [{ pid: generation.pid, birthId: "native-fixture-birth" }],
+    },
+  ]);
+});
+
+test("a native dispatch whose first birth observation failed keeps its charge without certifying a later process", async () => {
+  using f = fixture();
+  let captureAvailable = false;
+  const gate = createManagedLaunchAdmission({
+    ...f,
+    capture: (_request, pid) =>
+      captureAvailable ? { pid, birthId: "different-birth-after-dispatch" } : undefined,
+  });
+  const result = { ok: false, pid: null, spawnedPid: generation.pid };
+  expect(
+    await gate.run(
+      { kind: "ModelHost", runtimeKey: "native", launch: { manifest: {} } },
+      signal,
+      async (commit) => {
+        const bind = managedNativeLaunch("native");
+        expect(bind).toBeDefined();
+        expect(bind?.(generation.pid)).toBeUndefined();
+        captureAvailable = true;
+        expect(bind?.(generation.pid)).toBeUndefined();
+        expect(commit(generation.pid)).toBe("ManagedGenerationUnverified");
+        return await Promise.resolve({ ran: true, result });
+      },
+    ),
+  ).toEqual({ ran: true, result });
+  expect(f.authority.snapshot()).toMatchObject([{ state: "uncertain", generations: [] }]);
 });
