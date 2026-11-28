@@ -30,6 +30,8 @@ export interface RecommendationRow {
   promoted: PresetOverrideSource;
   /** Optional HF summary line (populated when the catalog has a repo). */
   hf?: string | null;
+  /** Part of #518: env/file preset overrides resolvePreset skipped because their rel is experimental, in layer order (env before file). */
+  skippedExperimental?: { source: "env" | "file"; rel: string }[];
 }
 
 export interface RecommendationsForProfile {
@@ -127,6 +129,7 @@ export function recommendationsForProfile(
   for (const target of TARGET_ORDER) {
     let rel: string;
     let promoted: PresetOverrideSource = null;
+    let skipped: { source: "env" | "file"; rel: string }[] | undefined = undefined;
     if (target === "qwen27") {
       rel = qwen35ForProfile(profile);
     } else if (target === "qwen") {
@@ -136,6 +139,7 @@ export function recommendationsForProfile(
       if (!resolution.rel) continue;
       rel = resolution.rel;
       promoted = resolution.source;
+      skipped = resolution.skippedExperimental;
     }
 
     const meta = findByRel(rel);
@@ -154,6 +158,9 @@ export function recommendationsForProfile(
       quant: quantFromRel(rel),
       ctx: ctxForRelUnderProfile(rel, profile),
       promoted,
+      ...(skipped !== undefined && skipped.length > 0
+        ? { skippedExperimental: skipped.map((s) => ({ ...s })) }
+        : {}),
     });
   }
 

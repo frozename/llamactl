@@ -5,9 +5,9 @@ import { doc, enclosingBody, flat, readOrEmpty, REPO, sectionBody } from "./help
 
 // Part of #522
 // Kills: the enforcement summary omitting the direct-start fence or the
-// read-only launch gate, the ModelRun catalog fallback losing its prose,
-// file:line citations entering the summary, or the source surfaces pinned
-// by those claims being unwired.
+// read-only launch gate, the ModelRun or ModelHost catalog fallback losing
+// its prose, file:line citations entering the summary, or the source surfaces
+// pinned by those claims being unwired.
 describe("#522 residency enforcement summary", () => {
   const OPEN =
     "What enforces today is the finite-budget admission math, the per-node residency-group start guard, the fenced direct-start lifecycle refusal and the read-only pre-launch gate, all four listed under Residency states and exclusion below.";
@@ -18,8 +18,10 @@ describe("#522 residency enforcement summary", () => {
     "What enforces today is the finite-budget admission math plus the per-node residency-group start guard described below";
   const FALLBACK =
     "when the stored ModelRun has no such label, or no ModelRun is stored under the name, `serverStart` takes the group from the catalog `residencyGroup` of the rel `resolveTarget` returns for its target (`directModelRunStartOpts`), and a label always wins";
+  const HOST_FALLBACK =
+    "when neither the inline nor stored ModelHost has such a label, `modelHostStart` takes the group from the catalog `residencyGroup` of its first hosted rel, the inline rel winning over the stored rel (`directResidencyGroup`), and a label always wins";
   const ITEM3 =
-    "3. The fenced direct-start lifecycle refusal (`runDirectResidencyStart`, `packages/remote/src/residency/direct-lifecycle.ts`, #517). The agent's `modelHostStart` and `serverStart` procedures (`packages/remote/src/router.ts`) run every direct start through it. A ModelHost takes its group from its `llamactl.io/residency-group` label; a ModelRun takes the label, else the catalog group of its resolved target. When another `loading` or `warming` row holds that exclusive group, or a `ready` row whose workload is not proven down, the start is refused before the engine runs, as `residency lifecycle refused <name> <from> -> <to>: ExclusiveGroupOccupied: <detail>`; a same-group `ready` peer proven down is instead reconciled to `downloaded` and logged as `[residency] lifecycle reconciled stale <peer> ready -> downloaded in group <group>`. It also refuses a start while a profile switch is in flight on the node, as `residency lifecycle refused <name>: profile switch in flight on this node; retry after it settles`. A writer inside the profile switch's own scope (its `applyManifest` calls) neither records nor refuses, and a node with no residency store file starts unrecorded. Details: [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop).";
+    "3. The fenced direct-start lifecycle refusal (`runDirectResidencyStart`, `packages/remote/src/residency/direct-lifecycle.ts`, #517). The agent's `modelHostStart` and `serverStart` procedures (`packages/remote/src/router.ts`) run every direct start through it. A ModelHost takes its group from its `llamactl.io/residency-group` label, else the catalog group of its hosted rel (an inline manifest's rel winning over the stored manifest's); a ModelRun takes the label, else the catalog group of its resolved target. When another `loading` or `warming` row holds that exclusive group, or a `ready` row whose workload is not proven down, the start is refused before the engine runs, as `residency lifecycle refused <name> <from> -> <to>: ExclusiveGroupOccupied: <detail>`; a same-group `ready` peer proven down is instead reconciled to `downloaded` and logged as `[residency] lifecycle reconciled stale <peer> ready -> downloaded in group <group>`. It also refuses a start while a profile switch is in flight on the node, as `residency lifecycle refused <name>: profile switch in flight on this node; retry after it settles`. A writer inside the profile switch's own scope (its `applyManifest` calls) neither records nor refuses, and a node with no residency store file starts unrecorded. Details: [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop).";
   const ITEM4 =
     "4. The read-only pre-launch gate (`exclusiveGroupLaunchRefusal`, `packages/remote/src/residency/direct-lifecycle.ts`, #517). Launches read the local residency store before they spawn and refuse when any `loading`, `warming` or `ready` row holds the declared-exclusive residency group of what they launch. Sandbox launches record no `residency_states` row and count a row for the same id: `llamactl eval run <model>` without `--url`, `llamactl eval perf --launch` and `llamactl admit measure` exit 1; the eval matrix runner spawns no refused engine, and writes an error cell for every workload of a refused model and for the one workload whose judge is refused; `llamactl bench preset` and `bench vision` exit 1, and the agent's bench subscriptions return the refusal as a stream error; the post-pull auto-tune records the preset or vision step as skipped with kind `exclusive-group-occupied`, and `llamactl candidate test` reports the step not run with the refusal as its reason. `llamactl keep-alive start` exits 1, locally or through the agent's `keepAliveStart` procedure, and the keep-alive worker's pre-start gate records `start-refused`; these keep-alive gates pass `ignoreModel` so only the target's own row is ignored, because the worker records that row itself through `runDirectResidencyStart` and `runDirectResidencyStop` (`keepAliveRecordedStart`, `keepAliveRecordedStop`). The refusal reads `residency lifecycle refused <id> downloaded -> loading: ExclusiveGroupOccupied: exclusive group <group> is held by <member> in state <state>`. It also refuses while a profile switch is in flight (`residency lifecycle refused <id>: profile switch in flight on this node; retry after it settles`) or when the store cannot be read (`residency lifecycle refused <id>: store unavailable (<error>)`). The gate is unfenced and never reconciles a proven-down peer, and a node with no store file launches as before.";
 
@@ -84,6 +86,29 @@ describe("#522 residency enforcement summary", () => {
     );
     expect(flatRouter, "serverStart start opts").toContain(
       "directModelRunStartOpts(input.workload, input.target)",
+    );
+  });
+
+  // Kills: modelHostStart using only the label, the stored rel shadowing the
+  // inline rel, or the docs losing the hosted-rel fallback.
+  test("ModelHost start group falls back to the hosted catalog rel", () => {
+    const pendingAt = states.indexOf("Still pending #276");
+    const beforePending = pendingAt === -1 ? states : states.slice(0, pendingAt);
+
+    expect(openItemsRegion, "hosted-rel fallback in open items").toContain(HOST_FALLBACK);
+    expect(beforePending, "hosted-rel fallback before Still pending #276").toContain(HOST_FALLBACK);
+    expect(lifecycleStates, "hosted-rel fallback in lifecycle states").toContain(HOST_FALLBACK);
+
+    const groupBody = flat(enclosingBody(router, "function directResidencyGroup("));
+    expect(groupBody, "directResidencyGroup signature").not.toBe("");
+    expect(groupBody, "stored hosted rel consulted").toContain("hostedModels[0]?.rel");
+    expect(groupBody, "catalog residencyGroup lookup").toContain("catalog.findByRel");
+
+    const startAt = router.indexOf("modelHostStart: t.procedure");
+    const endAt = startAt === -1 ? -1 : router.indexOf("workloadDelete: t.procedure", startAt);
+    const startBlock = flat(startAt === -1 || endAt === -1 ? "" : router.slice(startAt, endAt));
+    expect(startBlock, "inline hosted rel passed to group resolution").toContain(
+      "input.manifest?.spec.hostedModels[0]?.rel",
     );
   });
 
