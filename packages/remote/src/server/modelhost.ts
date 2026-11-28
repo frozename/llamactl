@@ -22,6 +22,7 @@ import {
   getEngineScopeLauncher,
   isScopeFallback,
   type ScopeOutcome,
+  scopeRequiredRefusal,
   type ScopeResolveResult,
   scopeStopNames,
   scopeUnitBase,
@@ -1305,7 +1306,8 @@ interface ModelHostScopeLaunch {
 
 // Every precondition failure — no boot-log evidence channel, an explicit null
 // launcher, an env conflict, a failed capability resolve — returns null and
-// the caller takes the byte-identical direct spawn.
+// the caller takes the byte-identical direct spawn, except for a required
+// launcher (#806 require mode), which refuses instead of spawning unscoped.
 async function resolveModelHostScopePlan(
   opts: StartModelHostOptions,
   manifest: ModelHostManifest,
@@ -1314,15 +1316,22 @@ async function resolveModelHostScopePlan(
   runtimeEnv: NodeJS.ProcessEnv,
   bootStdio: "ignore" | number,
 ): Promise<ModelHostScopeLaunch | null> {
-  if (bootStdio === "ignore") return null;
   const launcher = opts.engineScope !== undefined ? opts.engineScope : getEngineScopeLauncher();
   if (launcher === null) return null;
+  const required = launcher.required === true;
+  // Without a boot-log fd there is no exec marker, so a scope could never be
+  // proven established; an optional launcher stays direct, a required one refuses.
+  if (bootStdio === "ignore") {
+    if (required) throw new Error(scopeRequiredRefusal("no boot log"));
+    return null;
+  }
   const declaredKeys = [
     ...Object.keys(launch.envOverrides ?? {}),
     ...Object.keys(manifest.spec.env ?? {}),
   ];
   const shaped = shapeScopeEnv(childEnv, runtimeEnv, declaredKeys);
   if ("conflict" in shaped) {
+    if (required) throw new Error(scopeRequiredRefusal(`env-conflict ${shaped.conflict}`));
     modelHostWarn(opts)(
       `ModelHost ${opts.key.name}: engine scope env-conflict (${shaped.conflict}); spawning directly`,
     );
@@ -1335,7 +1344,10 @@ async function resolveModelHostScopePlan(
     // A throwing resolve is a failed capability probe: stay direct.
     resolution = { ok: false, reason: "probe-failed" };
   }
-  if (!resolution.ok) return null;
+  if (!resolution.ok) {
+    if (required) throw new Error(scopeRequiredRefusal(resolution.reason));
+    return null;
+  }
   const base = scopeUnitBase(opts.key.name, launcher.unitSuffix());
   return {
     launcher,
@@ -1440,6 +1452,9 @@ async function attemptScopedModelHostSpawn(
   if (pid === null) {
     // No process exists to handshake; the capability just proved flaky.
     scoped.launcher.noteFailure();
+    if (scoped.launcher.required === true) {
+      throw new Error(scopeRequiredRefusal("wrapper pid unavailable"));
+    }
     return { kind: "none" };
   }
   detachChild(child);
@@ -1564,7 +1579,8 @@ async function awaitModelHostReadiness(
 // fallback-eligible outcome while OUR starting record still names this unit
 // and no stop tombstone does — a mid-handshake stop must never be
 // double-booted by a direct spawn. Throws the scope outcome's message when
-// the gate refuses; otherwise clears the record, notes the capability failure
+// the gate refuses, and the require-mode refusal when the launcher is
+// required (#806); otherwise clears the record, notes the capability failure
 // and warns before the caller re-spawns directly.
 function scopedLaunchFallback(
   opts: StartModelHostOptions,
@@ -1581,6 +1597,12 @@ function scopedLaunchFallback(
     opts.signal?.aborted !== true;
   if (!mayFallback) {
     throw new Error(scopeLaunchErrorMessage(outcome, pid, scoped.scopeUnit));
+  }
+  // #806 require mode: the gate opened, but a required scope never takes the
+  // direct spawn — the launch fails with the scope outcome named instead.
+  if (scoped.launcher.required === true) {
+    scoped.launcher.noteFailure();
+    throw new Error(scopeRequiredRefusal(describeScopeOutcome(outcome, scoped.scopeUnit)));
   }
   clearStartingRecordIfOwned(opts.key, resolved, pid);
   scoped.launcher.noteFailure();
