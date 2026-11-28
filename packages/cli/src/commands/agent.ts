@@ -337,7 +337,9 @@ Environment:
                               LLAMACTL_RESIDENCY_LEASES is on; publishes
                               a session refcount registry beside the
                               lease registry once the listener binds.
-                              Other values are ignored.
+                              Other values, and a value set while
+                              LLAMACTL_RESIDENCY_LEASES is off, are
+                              ignored with a startup warning.
   LLAMACTL_CHAT_ADMISSION_MAX_EXECUTIONS
                               Inference admission concurrency cap: a positive
                               integer (opt-in, off by default). One cap is
@@ -1787,6 +1789,7 @@ export function validateServeWiring(
   parsed: ServeFlags,
   deps: ServeWiringDeps = {},
 ): ServeWiring | { error: string } {
+  const env = deps.env ?? process.env;
   const warn =
     deps.warn ??
     ((m: string): void => {
@@ -1794,7 +1797,7 @@ export function validateServeWiring(
     });
   const bearers = resolveServeBearers(
     parsed,
-    deps.env ?? process.env,
+    env,
     warn,
     deps.secretResolver === undefined ? {} : { secretResolver: deps.secretResolver },
   );
@@ -1812,6 +1815,9 @@ export function validateServeWiring(
   const tunnelCentralBearer = bearers.tunnelCentralBearer;
   const tunnelErr = checkTunnelCentral(parsed, tunnelCentralOn, tunnelCentralBearer, warn);
   if (tunnelErr) return { error: tunnelErr };
+
+  const sessionWarn = residencySessionConfigWarning(env);
+  if (sessionWarn !== null) warn(sessionWarn);
 
   return { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer };
 }
@@ -1834,6 +1840,21 @@ function residencySessionIdleOption(env: Readonly<Record<string, string | undefi
   if (raw === undefined) return {};
   const ms = parsePositiveInteger(raw);
   return ms === null ? {} : { residencySessionIdleMs: ms };
+}
+
+// #520: an idle timeout the agent will not honor is reported, not silently dropped
+function residencySessionConfigWarning(
+  env: Readonly<Record<string, string | undefined>>,
+): string | null {
+  const raw = env["LLAMACTL_RESIDENCY_SESSION_IDLE_MS"];
+  if (raw === undefined) return null;
+  if (!residencyLeasesOptIn(env)) {
+    return "warning: LLAMACTL_RESIDENCY_SESSION_IDLE_MS is set but LLAMACTL_RESIDENCY_LEASES is off; no session registry is installed, so bound sessions do not block unloads\n";
+  }
+  if (parsePositiveInteger(raw) === null) {
+    return "warning: LLAMACTL_RESIDENCY_SESSION_IDLE_MS is not a positive integer of milliseconds; ignoring it, so no session registry is installed\n";
+  }
+  return null;
 }
 
 const CHAT_ADMISSION_DEFAULT_MAX_QUEUED = 16;
