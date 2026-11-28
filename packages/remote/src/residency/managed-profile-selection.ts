@@ -22,14 +22,25 @@ export {
   managedProfileTargetState,
 } from "@llamactl/core/residency/profile-selection";
 
-const currentPermit = new AsyncLocalStorage<ManagedProfilePermit>();
+const currentPermit = new AsyncLocalStorage<{
+  permit: ManagedProfilePermit;
+  checkLaunch: (() => string | undefined) | undefined;
+}>();
 
 export function managedProfilePermit(): ManagedProfilePermit | undefined {
-  return currentPermit.getStore();
+  return currentPermit.getStore()?.permit;
 }
 
-export function withManagedProfilePermit<T>(permit: ManagedProfilePermit, apply: () => T): T {
-  return currentPermit.run(permit, apply);
+export function managedProfileLaunchRefusal(): string | undefined {
+  return currentPermit.getStore()?.checkLaunch?.();
+}
+
+export function withManagedProfilePermit<T>(
+  permit: ManagedProfilePermit,
+  apply: () => T,
+  checkLaunch?: () => string | undefined,
+): T {
+  return currentPermit.run({ permit, checkLaunch }, apply);
 }
 
 export function managedProfileMemberProfiles(

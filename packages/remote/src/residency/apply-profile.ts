@@ -141,6 +141,13 @@ export type ResidencyCancelOperationResult = {
   recordedOutcome?: ResidencyOperationOutcome | null;
 };
 
+export interface ProfileExecutionGuard {
+  signal: AbortSignal;
+  check: () => string | undefined;
+  trackActuator: (actuator: Promise<ProfileSwitchStepOutcome>) => void;
+  didActuate: () => boolean;
+}
+
 export type ApplyResidencyProfileArgs = {
   plan: ResidencyPlan;
   desired?: ProfileDesiredSnapshot;
@@ -155,6 +162,7 @@ export type ApplyResidencyProfileArgs = {
   applyModelRun?: (manifest: unknown, signal?: AbortSignal) => Promise<unknown>;
   managedLaunchAdmission?: ManagedLaunchAdmission;
   expectedManagedProfileOperationId?: string | null;
+  guard?: ProfileExecutionGuard;
   // sink for a missing node budget and heartbeat failures; default stderr
   log?: (line: string) => void;
 };
@@ -665,7 +673,10 @@ async function runFencedSwitch(
       executeProfileSwitch(plan, steps, {
         dryRun: false,
         registry: args.registry,
-        signal: controller.signal,
+        signal:
+          args.guard === undefined
+            ? controller.signal
+            : AbortSignal.any([controller.signal, args.guard.signal]),
         enforcePlanDeadline: managed,
         operation: {
           store,
@@ -675,9 +686,16 @@ async function runFencedSwitch(
           begun,
           managed,
           log,
-          ...(args.desired === undefined
+          ...(args.desired === undefined && args.guard === undefined
             ? {}
-            : { checkDesired: () => checkDesiredProfile(plan, args) }),
+            : { checkDesired: () => args.guard?.check() ?? checkDesiredProfile(plan, args) }),
+          ...(args.guard === undefined
+            ? {}
+            : {
+                checkBeforePublish: args.guard.check,
+                trackActuator: args.guard.trackActuator,
+                didActuate: args.guard.didActuate,
+              }),
           lifecycle: {
             store,
             groupOf: (workload) => residencyGroupOf(args.workloadsDir, workload),
@@ -685,7 +703,7 @@ async function runFencedSwitch(
         },
       });
     const report = await (managed
-      ? withManagedProfilePermit({ operationId, fenceToken }, execute)
+      ? withManagedProfilePermit({ operationId, fenceToken }, execute, args.guard?.check)
       : execute());
     const result = mapReport(report);
     return managed && report.ok && report.operation?.recorded !== true
@@ -742,6 +760,8 @@ export async function applyResidencyProfile(
   const managed = args.managedLaunchAdmission;
   if (managed !== undefined) {
     const preflight = (): string | undefined => {
+      const lost = args.guard?.check();
+      if (lost !== undefined) return lost;
       if (args.registry === null) return "managed profiles require a target lease registry";
       if (managed.preflightProfile === undefined) return "managed profile preflight is unavailable";
       return managed.preflightProfile(plan);

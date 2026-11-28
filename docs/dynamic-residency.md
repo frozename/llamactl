@@ -511,7 +511,9 @@ Managed profile execution consumes the plan's deadline across the drain, stops a
 
 A programmatic managed owner can opt in to admission quiescence by supplying an exclusive-ingress verifier. Acquisition checks the warm queue, cold activation and handoff, active leases and durable inference holds. New demand invalidates the pause. Admission stays closed until its owning handle releases it. The capability requires authenticated managed cold ingress and declines Worker RPC configurations.
 
-Automatic maintenance windows remain gated on a qualified exclusive-ingress deployment and an authorized scheduling policy. Manual selection uses the authenticated profile command above.
+An opted-in managed host can call `RunningAgent.tryApplyIdleProfile({ from, to, signal })` once for an explicit maintenance window. The host supplies the verified current source profile and aborts the signal when the window ends. The coordinator uses the same profile planner, cooldown, release checks, and operation journal as the authenticated manual command. Inference demand invalidates the pause. The switch rechecks authorization before teardown, at actuator boundaries, and before publishing the selected profile. If authorization disappears after teardown or launch, the owner keeps the existing durable recovery hold. If an actuator outlives the plan deadline, admission stays paused until that actuator settles.
+
+The window entry point is available only on a programmatic managed owner with a qualifying exclusive-ingress verifier. A deployment needs its own authorized scheduling policy and qualified exclusive ingress before it can invoke this entry point automatically.
 
 ### Stage 2 - request-driven admission and declared models
 

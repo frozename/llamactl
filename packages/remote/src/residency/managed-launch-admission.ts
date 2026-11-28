@@ -59,6 +59,7 @@ export interface ManagedLaunchAdmission {
   ownsNode?: (name: string) => boolean;
   ownerNodeId?: string;
   readStatus?: () => ManagedAdmissionReadout;
+  allowsProfileServing?: (workload: string) => boolean;
   observeProfileWorkload?: (
     workload: string,
     kind: ManagedWorkloadKind,

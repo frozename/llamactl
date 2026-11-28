@@ -55,6 +55,7 @@ import {
 } from "./managed-launch-admission.js";
 import {
   evaluateManagedProfileStart,
+  managedProfileLaunchRefusal,
   managedProfileMemberProfiles,
   managedProfilePermit,
   readManagedProfileSelection,
@@ -402,6 +403,21 @@ function approveLaunch(
   return decision.ok ? approved : { refusal: decision.reason };
 }
 
+function allowsProfileServing(
+  nodeName: string,
+  aliases: ReadonlySet<string>,
+  workloadsDir: string,
+  workload: string,
+): boolean {
+  const manifest = readDesired(() => loadWorkloadByNameAny(workload, workloadsDir));
+  if (manifest === undefined || !manifest.spec.enabled || !aliases.has(manifest.spec.node))
+    return false;
+  const profiles = managedProfileMemberProfiles(manifest.metadata.annotations);
+  if (profiles.length === 0) return true;
+  const selection = readManagedProfileSelection(defaultResidencyStorePath(), nodeName);
+  return evaluateManagedProfileStart(selection, profiles).ok;
+}
+
 function parseDesired(input: unknown): DesiredManifest | undefined {
   const run = ModelRunSchema.safeParse(input);
   if (run.success) return run.data;
@@ -701,6 +717,16 @@ function coldResidentReader(
   };
 }
 
+function readManagedRuntimePid(
+  resolved: ReturnType<typeof resolveEnv>,
+  name: string,
+): number | undefined {
+  const key = { name };
+  const run = server.readServerPid(key, resolved);
+  const host = readModelHostState(key, resolved)?.pid ?? readModelHostStarting(key, resolved)?.pid;
+  return run !== null && host !== undefined ? undefined : (run ?? host);
+}
+
 export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions): Promise<{
   admission: ManagedLaunchAdmission;
   authority: AdmissionAuthority;
@@ -728,13 +754,7 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
     storePath: managedAdmissionStorePath(runtimeDir),
     requireExisting: opts.requireExistingStore,
     budgetGiB,
-    readPidFile: (name) => {
-      const key = { name };
-      const run = server.readServerPid(key, resolved);
-      const host =
-        readModelHostState(key, resolved)?.pid ?? readModelHostStarting(key, resolved)?.pid;
-      return run !== null && host !== undefined ? undefined : (run ?? host);
-    },
+    readPidFile: (name) => readManagedRuntimePid(resolved, name),
   });
   const physical =
     measure === undefined ? undefined : ownerPhysicalPolicy(opts, measure, runtime.authority);
@@ -755,6 +775,8 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
     capture: (_request, pid) => runtime.capture(pid),
     inspectRuntime,
     resolve: (request) => {
+      const profileRefusal = managedProfileLaunchRefusal();
+      if (profileRefusal !== undefined) return { refusal: profileRefusal };
       if (unresolvedInference(opts.inferenceHolds?.state(request.runtimeKey))) {
         return { refusal: "ManagedInferenceUnresolved" };
       }
@@ -773,6 +795,8 @@ export async function openNodeManagedAdmission(opts: NodeManagedAdmissionOptions
       ownsNode: (name) => aliases.has(name),
       ownerNodeId: opts.nodeName,
       readStatus: () => managedReadout(opts, runtime.authority, budgetGiB),
+      allowsProfileServing: (workload) =>
+        allowsProfileServing(opts.nodeName, aliases, workloadsDir, workload),
       observeProfileWorkload: profileWorkload.bind(null, opts, resolved, runtime.authority),
       preflightProfile(plan): string | undefined {
         const runtimeRefusal = inspectRuntime();

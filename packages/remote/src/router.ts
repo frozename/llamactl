@@ -88,6 +88,7 @@ import type {
   ManagedApplyBudget,
   ManagedLaunchAdmission,
 } from "./residency/managed-launch-admission.js";
+import type { IdleProfileWindow, OwnerAdmissionPause } from "./residency/owner-activity.js";
 import type { Release, RequestAdmission } from "./residency/request-admission.js";
 import type { RuntimeBackend } from "./runtime/backend.js";
 import type { RuntimeKind } from "./runtime/factory.js";
@@ -117,6 +118,7 @@ import { resolveRagNode } from "./rag/resolve.js";
 import {
   applyResidencyProfile,
   cancelResidencyProfileOperation,
+  type ProfileExecutionGuard,
   residencyApplyProfileRefusal,
   type ResidencyApplyProfileResult,
   type ResidencyCancelOperationResult,
@@ -697,9 +699,60 @@ type ProfileMutationInput = {
   confirm: boolean;
 };
 
+export async function runIdleProfileMutation(
+  node: string,
+  window: IdleProfileWindow,
+  managed: ManagedLaunchAdmission,
+  tryPause: () => OwnerAdmissionPause | undefined,
+  trackSettlement: (settled: Promise<void>) => void,
+): Promise<ResidencyApplyProfileResult> {
+  const { from, to, signal } = window;
+  const refuse = (reason: string, detail: string): ResidencyApplyProfileResult =>
+    residencyApplyProfileRefusal({ node, from, to, reason, detail });
+  if (signal.aborted) return refuse("IdleProfileCanceled", "the maintenance window ended");
+  if (from.trim() === "" || to.trim() === "" || from === to) {
+    return refuse("IdleProfileInvalid", "a window requires distinct source and target profiles");
+  }
+  const pause = tryPause();
+  if (pause === undefined) return refuse("OwnerNotIdle", "no exclusive idle ingress proof");
+  const actuators = new Set<Promise<unknown>>();
+  let didActuate = false;
+  try {
+    const guard: ProfileExecutionGuard = {
+      signal: AbortSignal.any([signal, pause.signal]),
+      check: () =>
+        signal.aborted || !pause.isCurrent() ? "IdleProfileAuthorizationLost" : undefined,
+      didActuate: () => didActuate,
+      trackActuator: (actuator) => {
+        didActuate = true;
+        actuators.add(actuator);
+        const settled = (): void => {
+          actuators.delete(actuator);
+        };
+        void actuator.then(settled, settled);
+      },
+    };
+    return await runProfileMutation(
+      { node, from, to, dryRun: false, confirm: true },
+      managed,
+      guard,
+    );
+  } finally {
+    // A step deadline can return a durable unknown while its actuator is still settling.
+    if (actuators.size === 0) pause.release();
+    else
+      trackSettlement(
+        Promise.allSettled(actuators).then(() => {
+          pause.release();
+        }),
+      );
+  }
+}
+
 async function runProfileMutation(
   input: ProfileMutationInput,
   admission: ManagedLaunchAdmission | undefined,
+  guard?: ProfileExecutionGuard,
 ): Promise<ResidencyApplyProfileResult> {
   if (!input.dryRun && !input.confirm) {
     throw new TRPCError({
@@ -709,6 +762,15 @@ async function runProfileMutation(
   }
   const managed = profileOwner(input.node, admission);
   const node = managed?.ownerNodeId ?? input.node;
+  if (guard !== undefined && managed === undefined) {
+    return residencyApplyProfileRefusal({
+      reason: "ManagedOwnerRequired",
+      detail: "an idle switch requires its owner coordinator",
+      node,
+      from: input.from ?? null,
+      to: input.to,
+    });
+  }
   if (input.dryRun || managed === undefined)
     return await applyProfileMutation(input, node, managed);
 
@@ -723,7 +785,7 @@ async function runProfileMutation(
     });
   }
   try {
-    return await applyProfileMutation(input, node, managed);
+    return await applyProfileMutation(input, node, managed, guard);
   } finally {
     leave();
   }
@@ -766,6 +828,7 @@ async function applyProfileMutation(
   input: ProfileMutationInput,
   node: string,
   managed: ManagedLaunchAdmission | undefined,
+  guard?: ProfileExecutionGuard,
 ): Promise<ResidencyApplyProfileResult> {
   const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
   const storePath = defaultResidencyStorePath();
@@ -785,6 +848,7 @@ async function applyProfileMutation(
     storePath,
     workloadsDir,
     registry: getResidencyLeaseRegistry(),
+    ...(guard === undefined ? {} : { guard }),
     node,
     to: input.to,
     from: input.from ?? null,
