@@ -1,6 +1,7 @@
 import type { ManagedCapacitySample } from "@llamactl/core/resources/managed-capacity";
 
 import { server } from "@llamactl/core";
+import { hasUnmanagedLlamacppIdleSleep } from "@llamactl/core/engines";
 import {
   modelhostPidFile,
   modelhostStartingFile,
@@ -432,6 +433,12 @@ function compileDesired(
   if (manifest.kind === "ModelHost") {
     if (modelHostExternalBindHost(manifest.spec) !== null)
       return { refusal: "ManagedExternalBindUnavailable" };
+    if (
+      manifest.spec.engine === "llamacpp" &&
+      hasUnmanagedLlamacppIdleSleep(manifest.spec.extraArgs)
+    ) {
+      return { refusal: "ManagedLlamacppIdleSleepUnavailable" };
+    }
     const allocationGiB = declaredModelHostMemoryGiB(manifest);
     if (allocationGiB === null || allocationGiB <= 0) return undefined;
     const pinned = pinModelHostStartup(manifest);
@@ -459,6 +466,8 @@ function compileDesired(
   const resolved = resolveEnv();
   const prepared = server.prepareManagedServerStart({ ...opts, resolved, key: { name: workload } });
   if ("result" in prepared) return undefined;
+  if (hasUnmanagedLlamacppIdleSleep(prepared.launch.args))
+    return { refusal: "ManagedLlamacppIdleSleepUnavailable" };
   // A retry can drop the explicit --host and fall back to the endpoint.
   const fallback = opts.endpoint?.host ?? resolved.LLAMA_CPP_HOST;
   if (server.hostBindRefusal(["--host", fallback, ...prepared.launch.args], undefined, false))

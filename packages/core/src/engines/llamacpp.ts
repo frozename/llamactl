@@ -14,6 +14,15 @@ const DRAFT_MODEL_PATH_FLAGS: ReadonlySet<string> = new Set([
   "--dspark",
 ]);
 
+export function hasUnmanagedLlamacppIdleSleep(args: readonly string[]): boolean {
+  const flag = "--sleep-idle-seconds";
+  return args.some((argument, index) => {
+    const token = argument.replaceAll("_", "-");
+    if (token === flag) return args[index + 1] !== "-1";
+    return token.startsWith(flag + "=") && token !== flag + "=-1";
+  });
+}
+
 export function hasDraftModelPathArg(args: readonly string[]): boolean {
   return args.some((token) => {
     const [flag = ""] = token.split("=", 1);
