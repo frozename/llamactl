@@ -10,6 +10,7 @@ import { SERVER_SLUG } from "./shared.js";
 export function registerResidencyTools(server: McpServer): void {
   registerResidencyStatus(server);
   registerResidencyPlan(server);
+  registerResidencyEvictIdle(server);
   registerResidencyApplyProfile(server);
   registerResidencyCancelOperation(server);
   registerResidencyForceUnload(server);
@@ -62,6 +63,31 @@ function registerResidencyPlan(server: McpServer): void {
         ...(from !== undefined ? { from } : {}),
       });
       return toTextContent(result);
+    },
+  );
+}
+
+// #519: the read-only projection of residencyEvictIdle's dry run. The input is
+// deliberately `{ node }` only and the call passes just `{ node }`, so a stray
+// `targets` argument can never turn this preview into the wet eviction.
+function registerResidencyEvictIdle(server: McpServer): void {
+  server.registerTool(
+    "llamactl.residency.evictIdle",
+    {
+      title: "Idle eviction preview (dry run)",
+      description:
+        "Read-only. Mirrors the dry run of the remote residencyEvictIdle mutation: it takes `node` only and never sends targets, so it never stamps the idle hold or stops a workload; the wet run stays `llamactl residency evict-idle --node <name> --yes`, which stamps the durable llamactl.io/idle-evicted-at hold first. Returns the idle-evict window and one row per ready resident (would-evict with kind, or skipped NotDue / MinResidency / SessionsActive / SessionsUnknown), or ok:false with Disabled, NotServingNode, LeasesUnavailable, StoreUnreadable or LifecycleUnreadable. It is process-local: it reads the lease registry, session registry and node-local residency store of the MCP server's own process.",
+      inputSchema: {
+        node: z
+          .string()
+          .min(1)
+          .describe("Name of the NodeRun / serving node to preview idle eviction for."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      return toTextContent(await caller.residencyEvictIdle({ node: input.node }));
     },
   );
 }
