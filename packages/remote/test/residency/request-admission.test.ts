@@ -677,3 +677,76 @@ function countAbortListeners(signal: AbortSignal): ListenerCounts {
   });
   return counts;
 }
+
+test("queue wait records one outcome per reservation using its own priority and elapsed time", async () => {
+  const module = await loadAdmission();
+  expect(module).not.toBeNull();
+  if (module === null) return;
+  const clock = new FakeClock();
+  const samples: unknown[] = [];
+  const options = {
+    ...admissionOptions(clock, { limits: limits({ maxQueued: 2, maxQueueWaitMs: 50 }) }),
+    observeWait: (sample: unknown): void => {
+      samples.push(sample);
+    },
+  };
+  const admission = module.createRequestAdmission(options);
+  const held = await admission.acquire(req("held"));
+  const controller = new AbortController();
+  const cancelled = admission
+    .acquire(
+      { ...req("cancelled"), priority: "background" },
+      {
+        signal: controller.signal,
+      },
+    )
+    .catch((error: unknown) => error);
+  const next = admission.acquire(req("next"));
+  const refusal = await admission.acquire(req("refused")).catch((error: unknown) => error);
+  expect(refusal).toMatchObject({ code: "QueueFull" });
+  await clock.advance(25);
+  controller.abort();
+  expect(await cancelled).toMatchObject({ code: "Aborted" });
+  held();
+  held();
+  const release = await next;
+  const expired = admission
+    .acquire({ ...req("expired"), priority: "background" })
+    .catch((error: unknown) => error);
+  await clock.advance(50);
+  expect(await expired).toMatchObject({ code: "QueueWaitExceeded" });
+  release();
+  expect(samples).toEqual([
+    { priority: "interactive", outcome: "admitted", waitMs: 0 },
+    { priority: "interactive", outcome: "refused", waitMs: 0 },
+    { priority: "background", outcome: "cancelled", waitMs: 25 },
+    { priority: "interactive", outcome: "admitted", waitMs: 25 },
+    { priority: "background", outcome: "expired", waitMs: 50 },
+  ]);
+});
+
+test("a failing queue observer cannot strand grants, refusals or cancelled waiters", async () => {
+  const module = await loadAdmission();
+  expect(module).not.toBeNull();
+  if (module === null) return;
+  const options = {
+    ...admissionOptions(new FakeClock(), { limits: limits({ maxQueued: 1 }) }),
+    observeWait: (): void => {
+      throw new Error("recorder unavailable");
+    },
+  };
+  const admission = module.createRequestAdmission(options);
+  const release = await admission.acquire(req("active"));
+  const controller = new AbortController();
+  const cancelled = admission
+    .acquire(req("cancelled"), { signal: controller.signal })
+    .catch((error: unknown) => error);
+  const refusal = await admission.acquire(req("refused")).catch((error: unknown) => error);
+  expect(refusal).toMatchObject({ code: "QueueFull" });
+  controller.abort();
+  expect(await cancelled).toMatchObject({ code: "Aborted" });
+  const next = admission.acquire(req("next"));
+  release();
+  (await next)();
+  expect(admission.snapshot()).toMatchObject({ queued: 0, executing: 0 });
+});

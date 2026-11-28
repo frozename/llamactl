@@ -3,6 +3,7 @@ import type { RequestQueueLimits } from "@llamactl/core/residency/queue-policy";
 
 import type { ManagedLaunchAdmission } from "../residency/managed-launch-admission.js";
 import type { OwnerAdmission } from "../residency/owner-admission.js";
+import type { RequestAdmissionOptions } from "../residency/request-admission.js";
 
 import {
   type ColdOwnerAdmission,
@@ -65,6 +66,7 @@ export function prepareColdOwnerMount(opts: {
   noAuth: boolean;
   declaredModels: boolean;
   residencyLeases: boolean;
+  observeWait?: RequestAdmissionOptions["observeWait"];
 }): ColdOwnerAdmission | undefined {
   const { managed, warm, factory } = opts;
   if (
@@ -90,5 +92,6 @@ export function prepareColdOwnerMount(opts: {
         owner,
         warm,
         limits: coldLimits(executionGroups),
+        observeWait: opts.observeWait,
       });
 }
