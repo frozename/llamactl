@@ -2737,6 +2737,7 @@ export const router = t.router({
           hosts: modelHostStoreMod.listModelHosts(),
         }),
         sessionRegistry: currentSessionRefcounts(),
+        invalidNodeRuns: nodeRunStoreMod.listInvalidNodeRuns(),
       });
     }),
 
