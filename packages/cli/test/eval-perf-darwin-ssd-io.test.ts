@@ -272,10 +272,10 @@ describe("#521 eval perf darwin SSD I/O", () => {
     const io = readerFn(opts, "io");
     expect(typeof io).toBe("function");
     expect(await io!()).toEqual({ readBytes: 12288, writeBytes: 8192 });
-    expect(rusageCalls).toHaveLength(1);
-    expect(rusageCalls[0]?.pid).toBe(4242);
-    expect(rusageCalls[0]?.flavor).toBe(2);
-    expect(rusageCalls[0]?.byteLength).toBeGreaterThanOrEqual(160);
+    const ioCalls = rusageCalls.filter((call) => call.flavor === 2);
+    expect(ioCalls).toHaveLength(1);
+    expect(ioCalls[0]?.pid).toBe(4242);
+    expect(ioCalls[0]?.byteLength).toBeGreaterThanOrEqual(160);
     const reasons = readerReasonsOf(opts);
     expect(reasons["io"]).toBeUndefined();
     expect(reasons["gtt"]).toBe(
@@ -285,12 +285,18 @@ describe("#521 eval perf darwin SSD I/O", () => {
 
   test("C2 the real runPerfSuite stores increasing proc_pid_rusage deltas", async () => {
     // Kills: the reader not reaching the suite, or a reversed diff order.
-    let rusageCalls = 0;
+    let ioCalls = 0;
     perfSeams()({
       platform: "darwin",
-      procPidRusage: (_pid, _flavor, buffer) => {
-        const first = rusageCalls === 0;
-        rusageCalls += 1;
+      procPidRusage: (_pid, flavor, buffer) => {
+        if (flavor === 4) {
+          const view = new DataView(buffer.buffer, buffer.byteOffset);
+          view.setBigUint64(240, 3221225472n, true);
+          return 0;
+        }
+        if (flavor !== 2) return -1;
+        const first = ioCalls === 0;
+        ioCalls += 1;
         writeRusage(buffer, first ? 1000n : 5000n, first ? 10n : 30n);
         return 0;
       },

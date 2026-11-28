@@ -6,10 +6,13 @@ import { readFile as fsReadFile } from "../safe-fs-promises.js";
 import { defaultProcPidRusage } from "./darwin-rusage.js";
 import {
   decodeRusageInfoV2Io,
+  decodeRusageInfoV4LifetimeMaxFootprint,
   parseProcIo,
   parseVmHwm,
   RUSAGE_INFO_V2,
   RUSAGE_INFO_V2_SIZE,
+  RUSAGE_INFO_V4,
+  RUSAGE_INFO_V4_SIZE,
   rusageIo,
 } from "./normalise.js";
 
@@ -40,7 +43,8 @@ export interface PerfSuiteReaderReasons {
  * (a `node:fs/promises` re-export).
  *
  * `procPidRusage` is the macOS `proc_pid_rusage` call used by the darwin I/O
- * reader; it defaults to `defaultProcPidRusage()` and tests inject a fake.
+ * and peak-RSS readers; it defaults to `defaultProcPidRusage()` and tests
+ * inject a fake.
  */
 export interface PerfHostReaderOptions {
   pid: number | null | (() => number | null);
@@ -52,9 +56,10 @@ export interface PerfHostReaderOptions {
 /**
  * Build per-engine host readers for I/O and peak RSS.
  *
- * Linux reads `/proc/<pid>/io` and `VmHWM`. macOS reads only I/O, through
- * `proc_pid_rusage` with `RUSAGE_INFO_V2`; peak RSS stays unavailable. Any
- * other platform gets no reader and names the platform in its reason.
+ * Linux reads `/proc/<pid>/io` and `VmHWM`. macOS reads both through
+ * `proc_pid_rusage`: I/O with `RUSAGE_INFO_V2`, peak RSS with
+ * `RUSAGE_INFO_V4`'s `ri_lifetime_max_phys_footprint`. Any other platform gets
+ * no reader and names the platform in its reason.
  *
  * This function never sets `gtt` — GTT stays caller-injected
  * (probeGpuGtt lives in fleet-supervisor, which eval does not
@@ -97,10 +102,10 @@ export function createPerfHostReaders(opts: PerfHostReaderOptions): {
 
   const readers: PerfSuiteReaders = {};
 
-  // macOS: /proc is absent, but proc_pid_rusage with RUSAGE_INFO_V2 fills
-  // the per-process disk I/O byte counters. Peak RSS has no macOS reader.
+  // macOS: /proc is absent, so proc_pid_rusage supplies both counters: the
+  // disk I/O bytes through RUSAGE_INFO_V2 and the lifetime peak physical
+  // footprint (macOS's own peak-memory accounting) through RUSAGE_INFO_V4.
   if (platform === "darwin") {
-    reasons.peakRss = `VmHWM (/proc/<pid>/status) is Linux-only; no peak-RSS reader on ${platform}`;
     const call = opts.procPidRusage ?? defaultProcPidRusage();
     readers.io = async (): Promise<IoByteCounts | null> => {
       const pid = livePid();
@@ -110,6 +115,17 @@ export function createPerfHostReaders(opts: PerfHostReaderOptions): {
         if (rc !== 0) return null;
         const counts = decodeRusageInfoV2Io(buffer);
         return counts === null ? null : rusageIo(counts);
+      } catch {
+        return null;
+      }
+    };
+    readers.peakRss = async (): Promise<number | null> => {
+      const pid = livePid();
+      try {
+        const buffer = new Uint8Array(RUSAGE_INFO_V4_SIZE);
+        const rc = await call(pid, RUSAGE_INFO_V4, buffer);
+        if (rc !== 0) return null;
+        return decodeRusageInfoV4LifetimeMaxFootprint(buffer);
       } catch {
         return null;
       }

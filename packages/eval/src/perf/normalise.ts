@@ -154,6 +154,13 @@ export const RUSAGE_INFO_V2_SIZE = 160;
 export const RI_DISKIO_BYTESREAD_OFFSET = 144;
 export const RI_DISKIO_BYTESWRITTEN_OFFSET = 152;
 
+// `struct rusage_info_v4` (BSD sys/resource.h) is uuid[16] followed by 35 u64
+// counters, so the whole struct is 16 + 35 * 8 = 296 bytes. The peak-memory
+// counter ri_lifetime_max_phys_footprint is u64 index 28, at 16 + 28 * 8 = 240.
+export const RUSAGE_INFO_V4 = 4;
+export const RUSAGE_INFO_V4_SIZE = 296;
+export const RI_LIFETIME_MAX_PHYS_FOOTPRINT_OFFSET = 240;
+
 /**
  * Decode the disk I/O counters out of a raw `rusage_info_v2` buffer filled by
  * `proc_pid_rusage`. Returns null for a short buffer or a counter too large
@@ -171,6 +178,20 @@ export function decodeRusageInfoV2Io(buffer: Uint8Array): RusageIoInput | null {
     ri_diskio_bytesread: Number(readBytes),
     ri_diskio_byteswritten: Number(writeBytes),
   };
+}
+
+/**
+ * Decode `ri_lifetime_max_phys_footprint`, the process's lifetime peak physical
+ * footprint, out of a raw `rusage_info_v4` buffer filled by `proc_pid_rusage`.
+ * Returns null for a short buffer, for a counter the kernel left unset and for
+ * a value too large for an exact JavaScript number.
+ */
+export function decodeRusageInfoV4LifetimeMaxFootprint(buffer: Uint8Array): number | null {
+  if (buffer.byteLength < RUSAGE_INFO_V4_SIZE) return null;
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const value = view.getBigUint64(RI_LIFETIME_MAX_PHYS_FOOTPRINT_OFFSET, true);
+  if (value === 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return Number(value);
 }
 
 export function rusageIo(r: RusageIoInput): IoByteCounts | null {
