@@ -1,11 +1,18 @@
 // Part of #522: reading candidate rows with catalog list and catalog status
 
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { CuratedModel } from "../../../src/schemas.js";
 
-import { BUILTIN_CATALOG, formatCatalogRow, parseCatalogRow } from "../../../src/catalog.js";
+import {
+  BUILTIN_CATALOG,
+  formatCatalogRow,
+  listCatalog,
+  parseCatalogRow,
+} from "../../../src/catalog.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../../../src/safe-fs.js";
 import { curatedMetaFields, curatedTsvFields } from "../../../src/schemas.js";
 import { doc, flat, readOrEmpty, REPO, sectionBody } from "./helpers.js";
 
@@ -15,6 +22,11 @@ const cli = readOrEmpty(join(REPO, "packages/cli/src/commands/catalog.ts"));
 const core = readOrEmpty(join(REPO, "packages/core/src/catalog.ts"));
 const schemas = readOrEmpty(join(REPO, "packages/core/src/schemas.ts"));
 const router = readOrEmpty(join(REPO, "packages/remote/src/router.ts"));
+
+const tmp = mkdtempSync(join(tmpdir(), "llamactl-522-list-"));
+afterAll(() => {
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 function section(): string {
   expect(S, "missing section").toBeDefined();
@@ -51,10 +63,32 @@ describe("#522 catalog list and status readout", () => {
     expect(cli).toContain('let format: Format = "tsv";');
   });
 
+  test("all lists builtin rows first, then custom rows", () => {
+    const s = section();
+    expect(s).toContain("`all` prints the builtin rows first, then the custom rows");
+
+    const base = noMetaRow();
+    expect(base).toBeDefined();
+    const custom: CuratedModel = {
+      ...base!,
+      id: "doc-522-custom-row",
+      rel: "doc-522-custom/doc-522-custom-row.gguf",
+    };
+    const file = join(tmp, "curated-models.tsv");
+    writeFileSync(file, `${formatCatalogRow(custom)}\n`);
+
+    const rows = listCatalog("all", { customCatalogFile: file });
+    expect(rows).toHaveLength(BUILTIN_CATALOG.length + 1);
+    expect(rows.slice(0, BUILTIN_CATALOG.length).map((r) => r.rel)).toEqual(
+      BUILTIN_CATALOG.map((r) => r.rel),
+    );
+    expect(rows.at(-1)?.rel).toBe(custom.rel);
+    expect(rows.findIndex((r) => r.rel === custom.rel)).toBe(BUILTIN_CATALOG.length);
+  });
+
   test("documents and ships the TSV meta column", () => {
     const s = section();
-    expect(s).toContain("ninth");
-    expect(s).toContain("compact JSON");
+    expect(s).toContain("adds a ninth, tab-separated column of compact JSON");
     expect(s).toContain("curatedMetaFields");
     expect(s).toContain("formatCatalogRow");
 
@@ -84,6 +118,11 @@ describe("#522 catalog list and status readout", () => {
     expect(s).toContain("top-level fields");
     expect(s).toContain("`installed`");
     expect(s).toContain("catalogList");
+    expect(s).toContain("`--node all --json` prints the fan-out results");
+    expect(s).toContain("`{ node, ok, data }`");
+    expect(s).toContain("`{ node, ok, error }`");
+    expect(s).not.toContain("`--json`. It prints");
+    expect(s).not.toContain("Link [tsv-schemas.md]");
 
     expect(schemas).toContain(".extend(CuratedMeta.shape)");
     expect(router).toContain("installed: existsSync(join(resolved.LLAMA_CPP_MODELS, entry.rel))");
@@ -105,7 +144,23 @@ describe("#522 catalog list and status readout", () => {
     expect(cli).toContain("Unknown flag for catalog list: ${arg}");
     expect(cli).toContain('Unknown scope: ${arg} (expected ${SCOPES.join(" | ")})');
     expect(cli).toContain("catalog list: remote call to '");
-    expect(cli).toContain("results.some((r) => !r.ok) ? 2 : 0");
+
+    const fanOutStart = cli.indexOf("async function runListFanOut(");
+    expect(fanOutStart, "runListFanOut present").toBeGreaterThanOrEqual(0);
+    const fanOutEnd = cli.indexOf("\n}\n", fanOutStart);
+    expect(fanOutEnd, "runListFanOut closing brace present").toBeGreaterThan(fanOutStart);
+    const fanOut = cli.slice(fanOutStart, fanOutEnd);
+    const exit2 = "return results.some((r) => !r.ok) ? 2 : 0;";
+    expect(fanOut.split(exit2), "one exit-2 return per output branch").toHaveLength(3);
+    const jsonBranch = fanOut.indexOf('if (parsed.format === "json") {');
+    expect(jsonBranch, "JSON branch present").toBeGreaterThanOrEqual(0);
+    const jsonExit = fanOut.indexOf(exit2, jsonBranch);
+    const tsvLoop = fanOut.indexOf("for (const r of results) {");
+    expect(jsonExit, "JSON branch exits 2 on a failing node").toBeGreaterThan(jsonBranch);
+    expect(tsvLoop, "TSV loop follows the JSON branch return").toBeGreaterThan(jsonExit);
+    expect(fanOut.indexOf(exit2, tsvLoop), "TSV branch exits 2 on a failing node").toBeGreaterThan(
+      tsvLoop,
+    );
   });
 
   test("documents and preserves invalid custom row handling", () => {

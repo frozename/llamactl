@@ -140,16 +140,18 @@ tab-separated column of compact JSON holding only the meta keys the row sets,
 in `curatedMetaFields` order. A row that sets none prints eight columns. Every
 `z13-large-gpu` builtin row sets `residencyGroup` and `qualification`, so each
 prints the ninth column. That column is where the TSV shows availability,
-qualification stage and residency group. Link
+qualification stage and residency group. The column layout is in
 [tsv-schemas.md](tsv-schemas.md).
 
-`--json`. It prints a pretty JSON array of the entries. The meta keys are
+`--json` prints a pretty JSON array of the entries. The meta keys are
 top-level fields of each entry (`availability`, `qualification`, `residencyGroup`,
 ...), because `CuratedModel` extends the `CuratedMeta` shape
 (`packages/core/src/schemas.ts`). With `--node <node>`, the rows come from that
 node's `catalogList` procedure (`packages/remote/src/router.ts`), which adds an
 `installed` boolean to each entry. A local `--json` entry has no `installed`
-field.
+field. `--node all --json` prints the fan-out results instead of an entries
+array: one element per node, `{ node, ok, data }` with that node's entries in
+`data`, or `{ node, ok, error }` when the node failed (`runListFanOut`).
 
 These exit 1: `Unknown flag for catalog list: <flag>`, `Unexpected extra
 argument: <arg>`, `Unknown scope: <arg> (expected all | builtin | custom)`,
