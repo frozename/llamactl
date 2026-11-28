@@ -35,6 +35,7 @@ const ReportSchema = z.strictObject({
       processBytes: z.number().nullable(),
       processDeviceBytes: z.number().nullable(),
       sharedDeviceBytes: z.number().nullable(),
+      deviceAccounting: z.enum(["disjoint", "included", "unknown"]).optional(),
     }),
   ),
   options: z.strictObject({ minSamples: z.number(), overheadFraction: z.number() }),

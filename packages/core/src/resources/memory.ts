@@ -434,6 +434,8 @@ export interface CalibrationSample {
   processBytes: number | null;
   processDeviceBytes: number | null;
   sharedDeviceBytes: number | null;
+  /** Relation of attributed device memory to processBytes. Omission keeps disjoint accounting. */
+  deviceAccounting?: "disjoint" | "included" | "unknown" | undefined;
 }
 
 export interface CalibrationOptions {
@@ -605,6 +607,21 @@ interface UsableCalibrationSample {
   processBytes: number;
   processDeviceBytes: number | null;
   observedAtMs: number | null;
+  deviceAccounting: "included" | "disjoint";
+}
+
+function attributedSampleBytes({
+  processBytes,
+  processDeviceBytes,
+  deviceAccounting,
+}: UsableCalibrationSample): number | "unknown-device" | "invalid-input" {
+  if (deviceAccounting === "included") {
+    if (processDeviceBytes !== null && processDeviceBytes > processBytes) return "invalid-input";
+    return processBytes;
+  }
+  if (processDeviceBytes === null) return "unknown-device";
+  const total = processBytes + processDeviceBytes;
+  return Number.isFinite(total) ? total : "invalid-input";
 }
 
 function isValidCalibrationOptions(options: CalibrationOptions): boolean {
@@ -617,21 +634,34 @@ function isValidCalibrationOptions(options: CalibrationOptions): boolean {
   );
 }
 
-// Non-ok and unattributed samples are skipped (unknown, never zero); samples
-// without a process reading are unusable. Returns null when any ok sample
-// carries a malformed reading.
+// Legacy reports may contain unavailable readings. An explicit accounting
+// assertion with incomplete coverage would hide a charged allocation if skipped.
 function collectUsableSamples(
   samples: readonly CalibrationSample[],
-): UsableCalibrationSample[] | null {
+): UsableCalibrationSample[] | "unknown-device" | "invalid-input" {
   const usable: UsableCalibrationSample[] = [];
   for (const sample of samples) {
     if (sample.status !== "ok" || sample.source.trim() === "") continue;
-    if (hasInvalidReading(sample)) return null;
+    if (hasInvalidReading(sample)) return "invalid-input";
+    const accounting = sample.deviceAccounting;
+    switch (accounting) {
+      case "unknown":
+        return "unknown-device";
+      case "included":
+      case "disjoint":
+        if (sample.processBytes === null) return "invalid-input";
+        break;
+      case undefined:
+        break;
+      default:
+        return "invalid-input";
+    }
     if (sample.processBytes !== null) {
       usable.push({
         processBytes: sample.processBytes,
         processDeviceBytes: sample.processDeviceBytes,
         observedAtMs: sample.observedAtMs,
+        deviceAccounting: accounting ?? "disjoint",
       });
     }
   }
@@ -650,25 +680,23 @@ export function calibrateMeasuredEnvelope(input: {
   }
 
   const usableSamples = collectUsableSamples(input.samples);
-  if (usableSamples === null) return { known: false, reason: "invalid-input" };
+  if (typeof usableSamples === "string") return { known: false, reason: usableSamples };
   if (usableSamples.length < input.options.minSamples) {
     return { known: false, reason: "insufficient-samples" };
   }
 
-  // Shared device counters are never attributed to the process. A null
-  // per-process device reading is unknown, not zero: refuse the calibration
-  // so the envelope stays unknown-device rather than a lower-bound process
-  // attribution. On Metal/AMD RSS understates GPU memory, so a device-blind
-  // calibration is not a conservative admission envelope.
-  // measuredAtMs is the freshness stamp for admission: the latest usable
-  // sample observation, or null when no usable sample carries one.
+  // Shared counters cannot establish process coverage on unified memory.
   let peakBytes = 0;
   let measuredAtMs: number | null = null;
-  for (const { processBytes, processDeviceBytes, observedAtMs } of usableSamples) {
-    if (processDeviceBytes === null) return { known: false, reason: "unknown-device" };
-    peakBytes = Math.max(peakBytes, processBytes + processDeviceBytes);
-    if (observedAtMs !== null && (measuredAtMs === null || observedAtMs > measuredAtMs)) {
-      measuredAtMs = observedAtMs;
+  for (const sample of usableSamples) {
+    const bytes = attributedSampleBytes(sample);
+    if (typeof bytes === "string") return { known: false, reason: bytes };
+    peakBytes = Math.max(peakBytes, bytes);
+    if (
+      sample.observedAtMs !== null &&
+      (measuredAtMs === null || sample.observedAtMs > measuredAtMs)
+    ) {
+      measuredAtMs = sample.observedAtMs;
     }
   }
 
