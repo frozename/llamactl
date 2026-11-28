@@ -667,7 +667,10 @@ function recordEntries(value: unknown): Record<string, unknown>[] {
 // Condition reasons a node writes when its stop fence refused the work an
 // apply asked for: the restart itself, and eviction teardown that could not
 // stop the victim. `EvictStopFailed` and friends are ordinary failures, not
-// fence refusals, so they stay out of this set (#520).
+// fence refusals, so they stay out of this set (#520). `EvictStopRefused` is
+// excluded too: eviction writes it for a `stopped: false` reply with no
+// recognised fence reason (no lease or session refusal), so it cannot be
+// attributed to the stop fence and is reported as a plain eviction failure.
 const APPLY_FENCE_REASONS = new Set([
   "StopRefused",
   "EvictVictimBusy",

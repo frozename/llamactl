@@ -94,7 +94,10 @@ function registerWorkloadApply(server: McpServer): void {
 }
 
 // Mirrors APPLY_FENCE_REASONS in the remote ops-chat dispatcher: the MCP audit
-// row names the condition reason next to the refusal code.
+// row names the condition reason next to the refusal code. `EvictStopRefused`
+// is excluded on purpose: eviction writes it for a `stopped: false` reply that
+// carries no recognised fence reason, so nothing attributes it to the stop
+// fence and it stays an ordinary eviction failure rather than apply_refused.
 const APPLY_FENCE_REASONS = new Set([
   "StopRefused",
   "EvictVictimBusy",
