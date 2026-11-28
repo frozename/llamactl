@@ -228,6 +228,23 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
       );
       expect(factories).toBe(1);
       expect(running.tryQuiesceOwnerAdmissions).toBeUndefined();
+      async function failedLoads(): Promise<number> {
+        const metrics = await fetch(`${running!.url}/metrics`, {
+          headers: { authorization: `Bearer ${TOKEN}` },
+          tls: { ca: cert.certPem },
+        });
+        const line = (await metrics.text())
+          .split("\n")
+          .find(
+            (value) =>
+              value.startsWith("llamactl_execution_admission_wait_seconds_count{") &&
+              value.includes('stage="activation"') &&
+              value.includes('priority="interactive"') &&
+              value.includes('outcome="load_failed"'),
+          );
+        return Number(line?.split(" ").at(-1) ?? 0);
+      }
+      const before = await failedLoads();
       expect((await fetch(request(running, false), { tls: { ca: cert.certPem } })).status).toBe(
         401,
       );
@@ -244,6 +261,7 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
       const unified = await fetch(request(running), { tls: { ca: cert.certPem } });
       expect(unified.status).toBe(503);
       expect(attempts).toBe(2);
+      expect(await failedLoads()).toBe(before + 2);
     } finally {
       await running?.stop();
       restore();

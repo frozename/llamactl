@@ -42,7 +42,14 @@ export interface AcquireOptions {
 
 export type AdmissionRequest = Omit<QueueRequest, "deadlineMs">;
 
+export interface RequestQueueWait {
+  priority: QueueRequest["priority"];
+  outcome: "admitted" | "refused" | "cancelled" | "expired" | "load_failed";
+  waitMs: number;
+}
+
 export interface RequestAdmissionOptions {
+  observeWait?: (sample: RequestQueueWait) => void;
   limits: RequestQueueLimits;
   resident?: string[];
   exclusiveBackground?: boolean;
@@ -73,6 +80,8 @@ export interface RequestAdmission {
 const MAX_TIMER_MS = 2_147_483_647;
 
 interface Waiter {
+  priority: AdmissionRequest["priority"];
+  queuedAt: number;
   resolve: (release: Release) => void;
   reject: (error: RequestAdmissionError) => void;
   timer: unknown;
@@ -130,17 +139,20 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
   reserve(request: AdmissionRequest, options: AcquireOptions = {}): AdmissionReservation {
     const id = request.requestId;
     if (options.signal?.aborted === true) {
+      this.observeWait(request.priority, "cancelled", 0);
       return { refusal: new RequestAdmissionError("Aborted", null, id) };
     }
     const deadlineMs = options.deadlineMs ?? Number.POSITIVE_INFINITY;
     const result = this.policy.enqueue({ ...request, deadlineMs });
     if (result.kind === "duplicate") {
+      this.observeWait(request.priority, "refused", 0);
       return { refusal: new RequestAdmissionError("DuplicateRequest", null, id) };
     }
     if (result.kind === "refused") {
+      this.observeWait(request.priority, "refused", 0);
       return { refusal: new RequestAdmissionError(result.reason, result.retryAfterMs, id) };
     }
-    return { pending: this.acquireQueued(id, deadlineMs, options.signal) };
+    return { pending: this.acquireQueued(request, deadlineMs, options.signal) };
   }
 
   snapshot(): QueueSnapshot {
@@ -158,29 +170,33 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
   // ── enqueue path ─────────────────────────────────────────────────────
 
   private acquireQueued(
-    id: string,
+    request: AdmissionRequest,
     deadlineMs: number,
     signal: AbortSignal | undefined,
   ): Promise<Release> {
     const promise = new Promise<Release>((resolve, reject) => {
-      this.attachWaiter(id, deadlineMs, signal, resolve, reject);
+      this.attachWaiter(request, deadlineMs, signal, resolve, reject);
     });
     this.pump();
     return promise;
   }
 
   private attachWaiter(
-    id: string,
+    request: AdmissionRequest,
     deadlineMs: number,
     signal: AbortSignal | undefined,
     resolve: Waiter["resolve"],
     reject: Waiter["reject"],
   ): void {
+    const id = request.requestId;
+    const queuedAt = this.now();
     const waiter: Waiter = {
+      priority: request.priority,
+      queuedAt,
       resolve,
       reject,
       timer: null,
-      due: Math.min(deadlineMs, this.now() + this.opts.limits.maxQueueWaitMs),
+      due: Math.min(deadlineMs, queuedAt + this.opts.limits.maxQueueWaitMs),
       detachAbort: noopDetach,
     };
     if (signal !== undefined) {
@@ -200,7 +216,7 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
         return;
       }
       this.policy.cancel(id);
-      this.settle(id);
+      this.settle(id, "cancelled");
       reject(new RequestAdmissionError("Aborted", null, id));
       this.pump();
     };
@@ -208,7 +224,19 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
 
   // ── waiter lifecycle ─────────────────────────────────────────────────
 
-  private settle(id: string): Waiter | undefined {
+  private observeWait(
+    priority: RequestQueueWait["priority"],
+    outcome: RequestQueueWait["outcome"],
+    waitMs: number,
+  ): void {
+    try {
+      this.opts.observeWait?.({ priority, outcome, waitMs });
+    } catch {
+      // A failed observation must not interrupt a reservation.
+    }
+  }
+
+  private settle(id: string, outcome: RequestQueueWait["outcome"]): Waiter | undefined {
     const waiter = this.waiters.get(id);
     if (waiter === undefined) {
       return undefined;
@@ -219,6 +247,9 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
       waiter.timer = null;
     }
     waiter.detachAbort();
+    if (this.opts.observeWait !== undefined) {
+      this.observeWait(waiter.priority, outcome, Math.max(0, this.now() - waiter.queuedAt));
+    }
     return waiter;
   }
 
@@ -289,17 +320,17 @@ class RequestAdmissionImpl implements ReservableRequestAdmission {
   private applyAction(action: QueueAction): void {
     switch (action.kind) {
       case "start-execution": {
-        this.settle(action.requestId)?.resolve(this.makeRelease(action.requestId));
+        this.settle(action.requestId, "admitted")?.resolve(this.makeRelease(action.requestId));
         return;
       }
       case "expire": {
-        this.settle(action.requestId)?.reject(
+        this.settle(action.requestId, "expired")?.reject(
           new RequestAdmissionError(action.reason, action.retryAfterMs, action.requestId),
         );
         return;
       }
       case "fail": {
-        this.settle(action.requestId)?.reject(
+        this.settle(action.requestId, "load_failed")?.reject(
           new RequestAdmissionError("LoadFailed", action.retryAfterMs, action.requestId),
         );
         return;

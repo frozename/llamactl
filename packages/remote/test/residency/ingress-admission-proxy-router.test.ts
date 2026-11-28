@@ -785,6 +785,21 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
   test("a new cold declaration fences an already queued default request before dial", async () => {
     trackDefaultWorkload("resident");
     startDefaultEngineAdmission();
+    async function admittedCount(): Promise<number> {
+      const metrics = await fetch(`${agent!.url}/metrics`, { headers: authedHeaders() });
+      const line = (await metrics.text())
+        .split("\n")
+        .find(
+          (value) =>
+            value.startsWith("llamactl_execution_admission_wait_seconds_count{") &&
+            value.includes('group="default-device"') &&
+            value.includes('stage="execution"') &&
+            value.includes('priority="interactive"') &&
+            value.includes('outcome="admitted"'),
+        );
+      return Number(line?.split(" ").at(-1) ?? 0);
+    }
+    const before = await admittedCount();
     const activeA = await postChatStream();
     const activeB = await postChatStream();
     const queued = postChatStream();
@@ -822,6 +837,7 @@ describe("#281 DF-08: router local branches + /v1/completions share the chat cap
       result = await queued;
       expect(result.status).toBe(503);
       expect(upstream.hits("/v1/chat/completions")).toBe(2);
+      expect(await admittedCount()).toBe(before + 3);
     } finally {
       openaiProxy.setDeclaredModelSource(null);
       for (const gate of [...upstream.gates]) gate.release();

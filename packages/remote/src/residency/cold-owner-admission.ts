@@ -15,7 +15,11 @@ import { randomUUID } from "node:crypto";
 import type { OwnerAdmission } from "./owner-admission.js";
 
 import { admissionErrorResponse } from "../server/chat-admission.js";
-import { type AdmissionRequest, createRequestAdmission } from "./request-admission.js";
+import {
+  type AdmissionRequest,
+  createRequestAdmission,
+  type RequestAdmissionOptions,
+} from "./request-admission.js";
 
 type DeclaredModelEntryV1 = ColdEngineDispatch["declaration"];
 type ColdRevision = Pick<TrustedColdPin, "artifactRevision" | "policyRevision">;
@@ -59,6 +63,7 @@ interface ColdOwnerOptions {
   warm: OwnerAdmission;
   owner: TrustedColdOwner;
   limits: RequestQueueLimits;
+  observeWait?: RequestAdmissionOptions["observeWait"];
 }
 
 interface ColdBatch {
@@ -140,6 +145,7 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
   constructor(private readonly opts: ColdOwnerOptions) {
     this.admission = createRequestAdmission({
       limits: opts.limits,
+      ...(opts.observeWait === undefined ? {} : { observeWait: opts.observeWait }),
       load: (key, signal): Promise<void> => {
         const load = this.loadBatch(key, signal);
         this.activeLoads.add(load);
