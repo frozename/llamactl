@@ -163,7 +163,11 @@ export interface RouteCandidate {
    * `pinned = !defaultTargetModelIds(resolved).has(model)` and builds its
    * routes with stageByModel, so legacyWinner is informational only.
    *
-   * A degraded deployment never leads a healthy one for the same alias.
+   * `legacyWinner` marks the first legacy candidate for the alias at build
+   * time and is informational only: an admitted healthy advertisement can
+   * lead it, and insertCandidate keeps each alias list in healthy, degraded,
+   * experimental order, so callers read effectiveCandidate or
+   * selectCatalogCandidates instead.
    */
   legacyWinner: boolean;
 }
@@ -341,14 +345,18 @@ function admissionConflict(
   alias: string,
   existing: readonly RouteCandidate[],
 ): AliasConflict | null {
-  // #518: a stable advertisement is judged only against stable peers, mirroring
-  // admitPeerRoute in workloadRuntime.ts, so the advertised (unified) path
-  // matches legacy peer admission and never intrudes on an experimental route.
-  // An experimental advertisement is still judged against all candidates so it
-  // can neither shadow nor intrude on a stable alias or replica group.
+  // #518 parity with #896 (admitPeerRoute and seedPeerHolders in
+  // workloadRuntime.ts): a healthy advertisement is admitted for an id held
+  // only by degraded or experimental peer or advertised candidates, while
+  // local routes stay authoritative even when degraded. A degraded
+  // advertisement never shadows or joins a healthy or degraded holder, and an
+  // experimental advertisement is judged against all candidates so it can
+  // neither shadow nor intrude on an alias or replica group.
   const peers = isExperimentalAdvertisement(ad)
     ? existing
-    : existing.filter((c) => !isExperimentalAdvertisement(c.advertisement));
+    : isDegradedAdvertisement(ad)
+      ? existing.filter((c) => !isExperimentalAdvertisement(c.advertisement))
+      : existing.filter(blocksHealthyAdvertisement);
   const first = peers.at(0);
   if (first === undefined) return null;
   if (ad.replicaGroup !== undefined) {
@@ -378,16 +386,43 @@ export function isExperimentalAdvertisement(ad: RouteAdvertisementV1): boolean {
   return ad.qualification?.stage === "experimental";
 }
 
-/** Insert a non-experimental advertisement before the first experimental
- *  candidate of each alias list (#518); experimental ones append. */
+/** True when an advertisement declares its qualification stage degraded (#518). */
+export function isDegradedAdvertisement(ad: RouteAdvertisementV1): boolean {
+  return ad.qualification?.stage === "degraded";
+}
+
+/**
+ * Advertised-path collision tier of an advertisement (#518): experimental 2,
+ * degraded 1, healthy 0 — the twin of legacyGroupTier above and
+ * legacyQualificationTier in routing/capabilities.ts.
+ */
+function advertisementTier(ad: RouteAdvertisementV1): 0 | 1 | 2 {
+  if (isExperimentalAdvertisement(ad)) return 2;
+  return isDegradedAdvertisement(ad) ? 1 : 0;
+}
+
+/** True for a node's own legacy route, which stays authoritative whatever its
+ *  stage (#518, parity with the local authority in seedPeerHolders). */
+function isLocalLegacyCandidate(c: RouteCandidate): boolean {
+  return c.source === "legacy" && c.advertisement.transport === "local-http";
+}
+
+/** Candidates a healthy advertisement is judged against: healthy ones plus
+ *  local legacy routes, a degraded local route included (#518). */
+function blocksHealthyAdvertisement(c: RouteCandidate): boolean {
+  const tier = advertisementTier(c.advertisement);
+  return tier === 0 || (tier === 1 && isLocalLegacyCandidate(c));
+}
+
+/** Insert an advertisement so each alias list stays in healthy, degraded,
+ *  experimental order (#518) — the same tier order as compareDeployments: a
+ *  healthy candidate goes before the first degraded or experimental one, a
+ *  degraded one before the first experimental, experimental ones append. */
 function insertCandidate(list: RouteCandidate[], candidate: RouteCandidate): void {
-  if (isExperimentalAdvertisement(candidate.advertisement)) {
-    list.push(candidate);
-    return;
-  }
-  const firstExperimental = list.findIndex((c) => isExperimentalAdvertisement(c.advertisement));
-  if (firstExperimental === -1) list.push(candidate);
-  else list.splice(firstExperimental, 0, candidate);
+  const tier = advertisementTier(candidate.advertisement);
+  const firstLater = list.findIndex((c) => advertisementTier(c.advertisement) > tier);
+  if (firstLater === -1) list.push(candidate);
+  else list.splice(firstLater, 0, candidate);
 }
 
 export function addCatalogAdvertisement(
