@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 
 import {
@@ -30,6 +31,8 @@ const PROBE_LOCK = "/tmp/llamactl-residency-hardware-smoke.lock";
 const SHA256 = z.string().regex(/^[a-f0-9]{64}$/);
 const MAX_STREAM_BYTES = 64 * 1024;
 const MAX_COMPLETION_TOKENS = 8;
+const CAPACITY_INTERVAL_MS = 1000;
+const SWAP_READ_TIMEOUT_MS = 1500;
 const BENCHMARK_PROMPT = "Reply with exactly the single word OK.";
 
 const planSchema = z.strictObject({
@@ -49,6 +52,7 @@ const planSchema = z.strictObject({
     .optional(),
   contextTokens: z.number().int().min(512).max(131_072).default(4096),
   requiredHeadroomGiB: z.number().int().positive(),
+  maxSwapUsedGiB: z.number().nonnegative().default(0),
   readinessTimeoutMs: z.number().int().positive().max(180_000).default(60_000),
   requestTimeoutMs: z.number().int().positive().max(120_000).default(30_000),
 });
@@ -60,10 +64,13 @@ export interface HardwareProcessProbeOptions {
   execute?: boolean;
   lockDir?: string;
   readCapacity?: () => ManagedCapacitySample;
+  readSwap?: SwapRead;
   signal?: AbortSignal;
 }
 
 type Admission = ReturnType<typeof projectManagedCapacity>;
+type SwapRead = () => Promise<SwapCounterSample | undefined>;
+type SwapCheck = (sample: SwapCounterSample | undefined) => string | undefined;
 type Status = "NOT_RUN" | "BLOCKED" | "FAIL" | "PASS";
 type Sample = {
   state: "first-request" | "repeated-request";
@@ -86,6 +93,7 @@ interface Evidence {
   contextTokens?: number;
   artifactSha256?: string;
   capacity: ManagedCapacitySample[];
+  existingSwap?: { ceilingGiB: number; baselineUsedBytes?: number };
   readyInventoryMs?: number;
   requests: Sample[];
   release?: Release;
@@ -606,12 +614,29 @@ function capacityCheck(
   minimumGiB = 0,
 ): string | undefined {
   const sample = safeCapacity(readCapacity);
+  if (sample !== undefined) report.capacity.push(sample);
+  return inspectCapacity(sample, report, minimumGiB);
+}
+
+function inspectCapacity(
+  sample: ManagedCapacitySample | undefined,
+  report: Evidence,
+  minimumGiB = 0,
+): string | undefined {
   if (sample === undefined) return "CapacityUnknown";
-  report.capacity.push(sample);
-  const admission = projectManagedCapacity(sample, { nowMs: Date.now() });
+  const allowance = report.existingSwap;
+  const admission = projectManagedCapacity(sample, {
+    nowMs: Date.now(),
+    maxSwapUsedGiB: allowance?.ceilingGiB ?? 0,
+  });
   if (!report.launched) report.admission = admission;
   if (!admission.ok) return admission.reason;
-  return admission.launchHeadroomGiB < minimumGiB ? "InsufficientHeadroom" : undefined;
+  if (admission.launchHeadroomGiB < minimumGiB) return "InsufficientHeadroom";
+  if (allowance !== undefined && sample.swapUsedBytes !== null) {
+    const baseline = (allowance.baselineUsedBytes ??= sample.swapUsedBytes);
+    if (sample.swapUsedBytes > baseline) return "SwapUsedGrew";
+  }
+  return undefined;
 }
 
 async function probeServing(
@@ -642,35 +667,106 @@ function beginCapacityMonitor(
   read: () => ManagedCapacitySample | undefined,
   report: Evidence,
   controller: AbortController,
-): ReturnType<typeof setInterval> {
-  return setInterval(() => {
+  readSwap: SwapRead,
+  checkSwap?: SwapCheck,
+): () => Promise<void> {
+  let pending: Promise<void> | undefined;
+  const interval = setInterval(() => {
+    if (controller.signal.aborted) return;
     const refused = capacityCheck(read, report);
     if (refused !== undefined) controller.abort(refused);
-  }, 1000);
+    else if (pending === undefined && checkSwap !== undefined) {
+      pending = safeSwap(readSwap)
+        .then(checkSwap)
+        .then((failure) => {
+          if (failure !== undefined) controller.abort(failure);
+        })
+        .finally(() => {
+          pending = undefined;
+        });
+    }
+  }, CAPACITY_INTERVAL_MS);
+  return async () => {
+    clearInterval(interval);
+    await pending;
+  };
+}
+
+function readSwapTool(command: string, args: string[]): string {
+  const result = spawnSync(command, args, { encoding: "utf8", timeout: 1000 });
+  return result.status === 0 ? result.stdout : "";
 }
 
 async function snapshotSwap(): Promise<SwapCounterSample | undefined> {
-  return await probeNodeMem().then(
-    (sample) => sample.swap_io,
-    () => undefined,
-  );
+  const sample = await probeNodeMem({
+    exec: () => Promise.resolve(readSwapTool("/usr/bin/vm_stat", [])),
+    readPageSize: () => readSwapTool("/usr/bin/getconf", ["PAGESIZE"]),
+  });
+  return sample.swap_io;
+}
+
+async function safeSwap(read: SwapRead): Promise<SwapCounterSample | undefined> {
+  const cancel = new AbortController();
+  try {
+    const deadline = delay(SWAP_READ_TIMEOUT_MS, undefined, { signal: cancel.signal }).catch(
+      () => undefined,
+    );
+    return await Promise.race([read(), deadline]);
+  } catch {
+    return undefined;
+  } finally {
+    cancel.abort();
+  }
+}
+
+function swapEvidence(
+  before: SwapCounterSample,
+  after: SwapCounterSample,
+  maxAgeMs: number,
+): NonNullable<Evidence["swapIo"]> {
+  return { before, after, rate: deriveSwapRate(before, after, { nowMs: Date.now(), maxAgeMs }) };
+}
+
+async function beginQuietSwap(
+  read: SwapRead,
+  report: Evidence,
+  checkCapacity: () => string | undefined,
+  signal?: AbortSignal,
+): Promise<{ check: SwapCheck; before: SwapCounterSample }> {
+  const before = await safeSwap(read);
+  if (before?.status !== "ok") fail("SwapIoUnknown");
+  let latest = before;
+  const check = (
+    after: SwapCounterSample | undefined,
+    minimumIntervalMs = 0,
+  ): string | undefined => {
+    if (after === undefined) return "SwapIoUnknown";
+    const evidence = swapEvidence(latest, after, 30_000);
+    if (!report.launched) report.swapIo = evidence;
+    const rate = evidence.rate;
+    if (!rate.known || rate.intervalMs < minimumIntervalMs) return "SwapIoUnknown";
+    if (rate.swapInBytesPerSec > 0 || rate.swapOutBytesPerSec > 0) return "SwapIoActive";
+    latest = after;
+    return undefined;
+  };
+  await delay(CAPACITY_INTERVAL_MS, undefined, { signal });
+  requireCapacity(checkCapacity);
+  const refusal = check(await safeSwap(read), CAPACITY_INTERVAL_MS);
+  if (refusal !== undefined) fail(refusal);
+  signaled(signal);
+  return { check, before };
 }
 
 async function recordSwapIo(
   report: Evidence,
   before: SwapCounterSample | undefined,
-): Promise<void> {
-  const after = await snapshotSwap();
+  read: SwapRead,
+): Promise<SwapCounterSample | undefined> {
+  const after = await safeSwap(read);
   if (before !== undefined && after !== undefined) {
-    report.swapIo = {
-      before,
-      after,
-      rate: deriveSwapRate(before, after, {
-        nowMs: Date.now(),
-        maxAgeMs: 10 * 60_000,
-      }),
-    };
+    report.swapIo = swapEvidence(before, after, 10 * 60_000);
   }
+  return after;
 }
 
 function safeToReleaseWorkspace(report: Evidence): boolean {
@@ -717,11 +813,45 @@ async function settleProbe(
   report: Evidence,
   readCapacity: () => ManagedCapacitySample | undefined,
   swapBefore: SwapCounterSample | undefined,
-): Promise<void> {
+  readSwap: SwapRead,
+  checkSwap?: SwapCheck,
+): Promise<string | undefined> {
   report.release = await release(run, port);
   const sample = safeCapacity(readCapacity);
   if (sample !== undefined) report.afterRelease = sample;
-  await recordSwapIo(report, swapBefore);
+  const afterSwap = await recordSwapIo(report, swapBefore, readSwap);
+  return checkSwap === undefined
+    ? undefined
+    : (inspectCapacity(sample, report) ?? checkSwap(afterSwap));
+}
+
+function requireCapacity(checkCapacity: () => string | undefined): void {
+  const refusal = checkCapacity();
+  if (refusal !== undefined) fail(refusal);
+}
+
+async function probeSwapWindow(
+  read: SwapRead,
+  report: Evidence,
+  checkCapacity: () => string | undefined,
+  signal: AbortSignal,
+): Promise<{ before: SwapCounterSample | undefined; check?: SwapCheck }> {
+  if (report.existingSwap !== undefined)
+    return await beginQuietSwap(read, report, checkCapacity, signal);
+  const before = await safeSwap(read);
+  requireCapacity(checkCapacity);
+  return { before };
+}
+
+function processFailure(report: Evidence, detail: string): Evidence {
+  return report.launched ? { ...report, status: "FAIL", reason: detail } : block(report, detail);
+}
+
+function executionFailure(error: unknown, monitor: AbortSignal, combined: AbortSignal): string {
+  const blocked: unknown = monitor.reason;
+  return typeof blocked === "string"
+    ? blocked
+    : reason(error, combined.aborted ? "Canceled" : "ProbeFailed");
 }
 
 async function executeProbe(
@@ -731,62 +861,111 @@ async function executeProbe(
   lsof: string,
   readCapacity: () => ManagedCapacitySample | undefined,
   lockDir: string,
+  readSwap: SwapRead,
   signal?: AbortSignal,
 ): Promise<Evidence> {
   const port = reservePort();
   const runDir = mkdtempSync(join(tmpdir(), "llamactl-hardware-"));
   const controller = new AbortController();
   const runSignal = AbortSignal.any([controller.signal, signal ?? new AbortController().signal]);
-  const swapBefore = await snapshotSwap();
+  let swapBefore: SwapCounterSample | undefined;
+  let checkSwap: SwapCheck | undefined;
   let run: ProcessRun | undefined;
   let failure: string | undefined;
-  let monitor: ReturnType<typeof setInterval> | undefined;
+  let stopMonitor: (() => Promise<void>) | undefined;
   try {
     signaled(runSignal);
     saveRecovery(lockDir, { runDir, port });
-    const admissionRefusal = capacityCheck(readCapacity, report, plan.requiredHeadroomGiB);
-    if (admissionRefusal !== undefined) return block(report, admissionRefusal);
+    const window = await probeSwapWindow(
+      readSwap,
+      report,
+      () => capacityCheck(readCapacity, report, plan.requiredHeadroomGiB),
+      runSignal,
+    );
+    swapBefore = window.before;
+    checkSwap = window.check;
+    signaled(runSignal);
     if (!unchanged(pinned.inventory)) return block(report, "PinnedInputChanged");
-    monitor = beginCapacityMonitor(readCapacity, report, controller);
+    stopMonitor = beginCapacityMonitor(readCapacity, report, controller, readSwap, checkSwap);
     const launchStarted = performance.now();
     run = start(plan, pinned.modelPath, runDir, port);
     report.launched = true;
     saveRecovery(lockDir, { runDir, port, processGroup: run.pid });
     await probeServing(plan, run, port, lsof, runSignal, report, launchStarted);
-    failure = capacityCheck(readCapacity, report);
+    await stopMonitor();
+    const aborted: unknown = controller.signal.reason;
+    if (typeof aborted === "string") fail(aborted);
+    failure = capacityCheck(readCapacity, report) ?? checkSwap?.(await safeSwap(readSwap));
     if (run.hasExited()) failure ??= "EngineExited";
     if (!unchanged(pinned.inventory)) failure ??= "PinnedInputChanged";
   } catch (error) {
-    const blocked: unknown = controller.signal.reason;
-    failure =
-      typeof blocked === "string"
-        ? blocked
-        : reason(error, runSignal.aborted ? "Canceled" : "ProbeFailed");
+    failure = executionFailure(error, controller.signal, runSignal);
   } finally {
-    clearInterval(monitor);
+    await stopMonitor?.();
     try {
-      if (run !== undefined) await settleProbe(run, port, report, readCapacity, swapBefore);
+      if (run !== undefined) {
+        const settled = await settleProbe(
+          run,
+          port,
+          report,
+          readCapacity,
+          swapBefore,
+          readSwap,
+          checkSwap,
+        );
+        failure ??= settled;
+      }
     } finally {
       if (safeToReleaseWorkspace(report)) rmSync(runDir, { force: true, recursive: true });
     }
   }
-  return completeProbe(report, failure);
+  return report.launched ? completeProbe(report, failure) : block(report, failure ?? "ProbeFailed");
+}
+
+function plannedEvidence(plan: Plan): Evidence {
+  return {
+    ...evidence(),
+    backend: plan.backend,
+    ...(plan.backend === "omlx" ? {} : { contextTokens: plan.contextTokens }),
+    ...(plan.maxSwapUsedGiB === 0 ? {} : { existingSwap: { ceilingGiB: plan.maxSwapUsedGiB } }),
+  };
+}
+
+async function preflight(
+  plan: Plan,
+  report: Evidence,
+  readCapacity: () => ManagedCapacitySample | undefined,
+  readSwap: SwapRead,
+  signal?: AbortSignal,
+): Promise<Evidence> {
+  if (report.existingSwap === undefined) return report;
+  try {
+    await beginQuietSwap(
+      readSwap,
+      report,
+      () => capacityCheck(readCapacity, report, plan.requiredHeadroomGiB),
+      signal,
+    );
+    return report;
+  } catch (error) {
+    return block(report, reason(error, signal?.aborted ? "Canceled" : "ProbeFailed"));
+  }
 }
 
 export async function runHardwareProcessProbe(
   input: unknown,
   opts: HardwareProcessProbeOptions = {},
 ): Promise<Evidence> {
-  const report = evidence();
   const parsed = planSchema.safeParse(input);
-  if (!parsed.success) return block(report, "InvalidPlan");
+  if (!parsed.success) return block(evidence(), "InvalidPlan");
   const plan = parsed.data;
-  report.backend = plan.backend;
-  if (plan.backend !== "omlx") report.contextTokens = plan.contextTokens;
+  const report = plannedEvidence(plan);
   const readCapacity = opts.readCapacity ?? readLocalManagedCapacity;
   const refused = capacityCheck(readCapacity, report, plan.requiredHeadroomGiB);
   if (refused !== undefined) return block(report, refused);
-  if (opts.execute !== true) return report;
+  const readSwap = opts.readSwap ?? snapshotSwap;
+  if (opts.execute !== true)
+    return await preflight(plan, report, readCapacity, readSwap, opts.signal);
   const lsof = Bun.which("lsof", { PATH: "/usr/sbin:/usr/bin:/sbin:/bin" });
   if (lsof === null) return block(report, "ListenerInspectionUnavailable");
   const lockDir = opts.lockDir ?? PROBE_LOCK;
@@ -796,10 +975,19 @@ export async function runHardwareProcessProbe(
     saveRecovery(lockDir);
     signaled(opts.signal);
     const pinned = await pinAssets(plan, report, opts.signal);
-    return await executeProbe(plan, report, pinned, lsof, readCapacity, lockDir, opts.signal);
+    return await executeProbe(
+      plan,
+      report,
+      pinned,
+      lsof,
+      readCapacity,
+      lockDir,
+      readSwap,
+      opts.signal,
+    );
   } catch (error) {
     const detail = reason(error, opts.signal?.aborted ? "Canceled" : "InputOrCleanupUnverified");
-    return report.launched ? { ...report, status: "FAIL", reason: detail } : block(report, detail);
+    return processFailure(report, detail);
   } finally {
     if (safeToReleaseWorkspace(report)) rmSync(lockDir, { force: true, recursive: true });
   }

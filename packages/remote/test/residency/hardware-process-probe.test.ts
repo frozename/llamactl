@@ -1,4 +1,5 @@
 import type { ManagedCapacitySample } from "@llamactl/core/resources/managed-capacity";
+import type { SwapCounterSample } from "@llamactl/core/resources/memory";
 
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -387,3 +388,206 @@ test("an unverified surviving group retains the private recovery files and block
     }
   }
 });
+
+function swapCounters(swapInBytes = 0, swapOutBytes = 0): SwapCounterSample {
+  return { status: "ok", source: "fixture", observedAtMs: Date.now(), swapInBytes, swapOutBytes };
+}
+
+test("an explicit ceiling accepts quiet occupied swap in a read-only preflight", async () => {
+  expect(
+    await run(
+      { ...plan(), maxSwapUsedGiB: 3.25 },
+      {
+        readCapacity: () => capacity({ swapUsedBytes: 3 * GiB }),
+        readSwap: () => Promise.resolve(swapCounters()),
+      },
+    ),
+  ).toMatchObject({
+    status: "NOT_RUN",
+    launched: false,
+    admission: { ok: true, launchHeadroomGiB: 12 },
+    existingSwap: { ceilingGiB: 3.25, baselineUsedBytes: 3 * GiB },
+    swapIo: { rate: { known: true, swapInBytesPerSec: 0, swapOutBytesPerSec: 0 } },
+  });
+});
+
+test("a swap ceiling cannot admit unavailable or active swap counters", async () => {
+  const input = { ...plan(), maxSwapUsedGiB: 3.25 };
+  const readCapacity = (): ManagedCapacitySample => capacity({ swapUsedBytes: 3 * GiB });
+  expect(
+    await run(input, { readCapacity, readSwap: () => Promise.resolve(undefined) }),
+  ).toMatchObject({
+    status: "BLOCKED",
+    reason: "SwapIoUnknown",
+    launched: false,
+  });
+  let reads = 0;
+  expect(
+    await run(input, {
+      readCapacity,
+      readSwap: () => Promise.resolve(swapCounters(0, reads++ * 4096)),
+    }),
+  ).toMatchObject({
+    status: "BLOCKED",
+    reason: "SwapIoActive",
+    launched: false,
+  });
+});
+
+test("existing swap does not waive pressure or physical headroom", async () => {
+  const input = { ...plan(), maxSwapUsedGiB: 3.25 };
+  const readSwap = (): Promise<ReturnType<typeof swapCounters>> => Promise.resolve(swapCounters());
+  expect(
+    await run(input, {
+      readCapacity: () => capacity({ swapUsedBytes: 3 * GiB, pressure: "warning" }),
+      readSwap,
+    }),
+  ).toMatchObject({ status: "BLOCKED", reason: "MemoryPressure", launched: false });
+  expect(
+    await run(input, {
+      readCapacity: () => capacity({ swapUsedBytes: 3 * GiB, availableBytes: 13 * GiB }),
+      readSwap,
+    }),
+  ).toMatchObject({ status: "BLOCKED", reason: "InsufficientHeadroom", launched: false });
+});
+
+test("swap activity during an opted-in run aborts the engine and verifies release", async () => {
+  let reads = 0;
+  expect(
+    await run(
+      { ...plan("slow"), maxSwapUsedGiB: 3.25 },
+      {
+        execute: true,
+        readCapacity: () => capacity({ swapUsedBytes: 3 * GiB }),
+        readSwap: () => Promise.resolve(swapCounters(++reads > 2 ? 4096 : 0)),
+      },
+    ),
+  ).toMatchObject({
+    status: "FAIL",
+    reason: "SwapIoActive",
+    launched: true,
+    requests: [],
+    release: { processExited: true, portReleased: true, forced: false },
+  });
+});
+
+test("occupied swap growth below the approved ceiling still aborts the live probe", async () => {
+  let reads = 0;
+  expect(
+    await run(
+      { ...plan("slow"), maxSwapUsedGiB: 3.25 },
+      {
+        execute: true,
+        readCapacity: () => capacity({ swapUsedBytes: 3 * GiB + (reads++ >= 2 ? 4096 : 0) }),
+        readSwap: () => Promise.resolve(swapCounters()),
+      },
+    ),
+  ).toMatchObject({
+    status: "FAIL",
+    reason: "SwapUsedGrew",
+    launched: true,
+    requests: [],
+    release: { processExited: true, portReleased: true, forced: false },
+  });
+});
+
+test("a guarded run with quiet existing swap can complete and release its engine", async () => {
+  expect(
+    await run(
+      { ...plan(), maxSwapUsedGiB: 3.25 },
+      {
+        execute: true,
+        readCapacity: () => capacity({ swapUsedBytes: 3 * GiB }),
+        readSwap: () => Promise.resolve(swapCounters()),
+      },
+    ),
+  ).toMatchObject({
+    status: "PASS",
+    launched: true,
+    existingSwap: { ceilingGiB: 3.25, baselineUsedBytes: 3 * GiB },
+    swapIo: { rate: { known: true, swapInBytesPerSec: 0, swapOutBytesPerSec: 0 } },
+    release: { processExited: true, portReleased: true, forced: false },
+  });
+});
+
+test("the execution boundary blocks an opted-in launch if swap becomes active", async () => {
+  let reads = 0;
+  expect(
+    await run(
+      { ...plan(), maxSwapUsedGiB: 3.25 },
+      {
+        execute: true,
+        readCapacity: () => capacity({ swapUsedBytes: 3 * GiB }),
+        readSwap: () => Promise.resolve(swapCounters(4096 * reads++)),
+      },
+    ),
+  ).toMatchObject({ status: "BLOCKED", reason: "SwapIoActive", launched: false });
+});
+
+test("swap activity in the release samples prevents qualification", async () => {
+  const input = { ...plan(), maxSwapUsedGiB: 3.25 };
+  const recovery = join(dirname(input.binary), "lock", "run.json");
+  const readSwap = (): Promise<SwapCounterSample> => {
+    const { processGroup } = JSON.parse(readFileSync(recovery, "utf8")) as {
+      processGroup?: number;
+    };
+    if (processGroup !== undefined) {
+      try {
+        process.kill(processGroup, 0);
+      } catch {
+        return Promise.resolve(swapCounters(4096));
+      }
+    }
+    return Promise.resolve(swapCounters());
+  };
+  const evidence = await run(input, {
+    execute: true,
+    readCapacity: () => capacity({ swapUsedBytes: 3 * GiB }),
+    readSwap,
+  });
+  expect(evidence.requests).toHaveLength(4);
+  expect(evidence).toMatchObject({
+    status: "FAIL",
+    reason: "SwapIoActive",
+    launched: true,
+    release: { processExited: true, portReleased: true, forced: false },
+  });
+});
+
+test("the final capacity read cannot be followed by a launch after new swap I/O", async () => {
+  let capacityReads = 0;
+  let swapped = false;
+  expect(
+    await run(
+      { ...plan(), maxSwapUsedGiB: 3.25 },
+      {
+        execute: true,
+        readCapacity: () => {
+          if (++capacityReads === 2) swapped = true;
+          return capacity({ swapUsedBytes: 3 * GiB });
+        },
+        readSwap: () => Promise.resolve(swapCounters(swapped ? 4096 : 0)),
+      },
+    ),
+  ).toMatchObject({ status: "BLOCKED", reason: "SwapIoActive", launched: false });
+});
+
+test("a stalled swap read is bounded and the process is still released", async () => {
+  let reads = 0;
+  expect(
+    await run(
+      { ...plan("slow"), maxSwapUsedGiB: 3.25 },
+      {
+        execute: true,
+        readCapacity: () => capacity({ swapUsedBytes: 3 * GiB }),
+        readSwap: () =>
+          ++reads === 3 ? new Promise<never>(() => undefined) : Promise.resolve(swapCounters()),
+      },
+    ),
+  ).toMatchObject({
+    status: "FAIL",
+    reason: "SwapIoUnknown",
+    launched: true,
+    release: { processExited: true, portReleased: true, forced: false },
+  });
+}, 7000);
