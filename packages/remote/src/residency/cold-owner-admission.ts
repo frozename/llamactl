@@ -18,6 +18,8 @@ import { admissionErrorResponse } from "../server/chat-admission.js";
 import { type AdmissionRequest, createRequestAdmission } from "./request-admission.js";
 
 type DeclaredModelEntryV1 = ColdEngineDispatch["declaration"];
+type ColdRevision = Pick<TrustedColdPin, "artifactRevision" | "policyRevision">;
+type BoundColdDispatch = (request: Omit<ColdEngineDispatch, "declaration">) => Promise<Response>;
 
 export interface TrustedColdPin {
   model: string;
@@ -71,6 +73,10 @@ interface ColdBatch {
 
 export interface ColdOwnerAdmission {
   forward: ColdEngineForwarder;
+  bindPeer: (
+    declaration: Readonly<DeclaredModelEntryV1>,
+    revision: Readonly<ColdRevision>,
+  ) => BoundColdDispatch | undefined;
   stop: () => void;
   whenIdle: () => Promise<void>;
   isQuiescent: () => boolean;
@@ -190,6 +196,7 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
     if (!this.pinStillCurrent(batch)) throw new Error("cold pin changed");
     const existing = await this.opts.owner.ready(batch.pin, signal);
     if (existing !== undefined) return this.checkReady(batch, existing);
+    if (batch.declaration.state === "ready") throw new Error("ready deployment lost proof");
     signal.throwIfAborted();
     if (!this.pinStillCurrent(batch)) throw new Error("cold pin changed");
     return await this.activate(batch, signal);
@@ -233,11 +240,15 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
     this.admission.invalidateModel(modelKey);
   }
 
-  private currentPin(declaration: Readonly<DeclaredModelEntryV1>): TrustedColdPin | undefined {
+  private currentPin(
+    declaration: Readonly<DeclaredModelEntryV1>,
+    allowReady = false,
+  ): TrustedColdPin | undefined {
     if (
       declaration.ownerNodeId !== this.opts.ownerNodeId ||
       !(
         declaration.state === "loading" ||
+        (allowReady && declaration.state === "ready") ||
         (declaration.state === "cold" && declaration.autoLoadEligible)
       )
     )
@@ -287,14 +298,22 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
     }) ?? ownerRefusal("cold_owner_unavailable"));
   }
 
-  private async forwardRequest(dispatch: ColdEngineDispatch): Promise<Response> {
+  private async forwardRequest(
+    dispatch: ColdEngineDispatch,
+    expectedPinKey?: string,
+  ): Promise<Response> {
     if (dispatch.clientSignal.aborted) return new Response(null, { status: 499 });
     if (this.blocked.signal.aborted) return ownerRefusal("cold_owner_fenced");
     if (this.stopped.signal.aborted) return ownerRefusal("cold_owner_unavailable");
     const declaration = Object.freeze({ ...dispatch.declaration });
-    const pin = this.currentPin(declaration);
+    const pin = this.currentPin(declaration, expectedPinKey !== undefined);
     const target = pin === undefined ? undefined : buildTarget(pin, dispatch.path);
-    if (pin === undefined || target === undefined) return ownerRefusal("cold_owner_unavailable");
+    if (
+      pin === undefined ||
+      target === undefined ||
+      (expectedPinKey !== undefined && pinKey(pin) !== expectedPinKey)
+    )
+      return ownerRefusal("cold_owner_unavailable");
 
     const request: LocalEngineRequest = {
       target,
@@ -314,14 +333,32 @@ class ColdOwnerAdmissionImpl implements ColdOwnerAdmission {
     return await this.queueAndForward(batch, request, dispatch, checked.request);
   }
 
-  forward: ColdEngineForwarder = async (dispatch): Promise<Response> => {
+  private async trackForward(
+    dispatch: ColdEngineDispatch,
+    expectedPinKey?: string,
+  ): Promise<Response> {
     // Keep cold demand visible through the handoff to warm admission.
     this.pendingAdmissions++;
     try {
-      return await this.forwardRequest(dispatch);
+      return await this.forwardRequest(dispatch, expectedPinKey);
     } finally {
       this.pendingAdmissions--;
     }
+  }
+
+  forward: ColdEngineForwarder = (dispatch) => this.trackForward(dispatch);
+
+  bindPeer: ColdOwnerAdmission["bindPeer"] = (declaration, revision) => {
+    if (this.blocked.signal.aborted || this.stopped.signal.aborted) return undefined;
+    const owned = Object.freeze({ ...declaration });
+    const pin = this.currentPin(owned, true);
+    if (
+      pin?.artifactRevision !== revision.artifactRevision ||
+      pin.policyRevision !== revision.policyRevision
+    )
+      return undefined;
+    const expectedPinKey = pinKey(pin);
+    return (request) => this.trackForward({ ...request, declaration: owned }, expectedPinKey);
   };
 
   stop = (): void => {

@@ -19,7 +19,7 @@ export function admitsPeerDeclarationEvidence(peer: PeerNode): boolean {
   );
 }
 
-function peerIdentity(peer: PeerNode): string {
+export function peerDeclarationIdentity(peer: PeerNode): string {
   return createHash("sha256")
     .update(
       JSON.stringify([
@@ -66,11 +66,11 @@ function applyPeerObservation(
   if (snapshot?.declaredProvenance !== undefined) {
     history.set(
       peer.id,
-      appendAliases(previous, peerIdentity(peer), snapshot.declaredProvenance.entries),
+      appendAliases(previous, peerDeclarationIdentity(peer), snapshot.declaredProvenance.entries),
     );
   } else if (
     snapshot?.declaredInventory?.ownerNodeId === peer.id &&
-    previous?.identity === peerIdentity(peer)
+    previous?.identity === peerDeclarationIdentity(peer)
   ) {
     history.delete(peer.id);
   }
@@ -90,17 +90,38 @@ export function recordPeerDeclarationDenials(
     if (duplicates.has(peer.id) || !admitsPeerDeclarationEvidence(peer)) continue;
     applyPeerObservation(history, peer, snapshots.get(peer.id));
   }
+  const byId = new Map(peers.map((peer) => [peer.id, peer]));
   for (const [id, snapshot] of snapshots) {
-    const { declaredInventory: _inventory, declaredDenials: _denials, ...current } = snapshot;
-    const recorded = history.get(id);
-    snapshots.set(
-      id,
-      recorded === undefined
-        ? current
-        : {
-            ...current,
-            declaredDenials: { aliases: recorded.aliases, saturated: recorded.saturated },
-          },
-    );
+    const peer = duplicates.has(id) ? undefined : byId.get(id);
+    snapshots.set(id, projectPeerDeclaration(snapshot, peer, history.get(id)));
   }
+}
+
+function projectPeerDeclaration(
+  snapshot: PeerSnapshot,
+  peer: PeerNode | undefined,
+  recorded: History | undefined,
+): PeerSnapshot {
+  const {
+    declaredInventory,
+    declarationIdentity: _identity,
+    declaredDenials: _denials,
+    ...current
+  } = snapshot;
+  const identity =
+    peer !== undefined && admitsPeerDeclarationEvidence(peer)
+      ? peerDeclarationIdentity(peer)
+      : undefined;
+  const validIdentity =
+    identity !== undefined && (recorded === undefined || recorded.identity === identity);
+  const proved =
+    validIdentity && (snapshot.declaredProvenance !== undefined || declaredInventory !== undefined);
+  return {
+    ...current,
+    ...(proved ? { declarationIdentity: identity } : {}),
+    ...(proved && declaredInventory !== undefined ? { declaredInventory } : {}),
+    ...(recorded === undefined
+      ? {}
+      : { declaredDenials: { aliases: recorded.aliases, saturated: recorded.saturated } }),
+  };
 }

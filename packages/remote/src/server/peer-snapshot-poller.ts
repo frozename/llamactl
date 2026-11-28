@@ -274,7 +274,12 @@ async function fetchPeerSnapshot(
 function withoutDeclarationProvenance(snapshot: PeerSnapshot): PeerSnapshot {
   if (snapshot.declaredProvenance === undefined && snapshot.declaredInventory === undefined)
     return snapshot;
-  const { declaredProvenance: _discarded, declaredInventory: _inventory, ...legacy } = snapshot;
+  const {
+    declaredProvenance: _discarded,
+    declaredInventory: _inventory,
+    declarationIdentity: _identity,
+    ...legacy
+  } = snapshot;
   return legacy;
 }
 

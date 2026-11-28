@@ -85,6 +85,7 @@ export interface PeerSnapshot {
   /** Explicit negotiated evidence, independent of legacy workload cache revisions. */
   declaredProvenance?: PeerDeclarationProvenanceV1;
   declaredInventory?: PeerEmptyDeclarationInventory;
+  declarationIdentity?: string;
   /** Retained denial evidence. It cannot create a route or authorize activation. */
   declaredDenials?: { aliases: ReadonlySet<string>; saturated: boolean };
 
