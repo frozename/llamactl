@@ -12,7 +12,7 @@
  * interval is what makes "kill the launching parent" observable.
  */
 
-import { writeFileSync } from "../../src/safe-fs.js";
+import { atomicWriteFileSync } from "../../src/atomic-write.js";
 import { startModelHost } from "../../src/server/modelhost.js";
 
 interface ParentConfig {
@@ -45,7 +45,7 @@ try {
   outcome = { ok: false, pid: null, error: error instanceof Error ? error.message : String(error) };
 }
 
-writeFileSync(config.resultPath, JSON.stringify(outcome));
+atomicWriteFileSync(config.resultPath, JSON.stringify(outcome));
 
 // Hold the loop so the parent lives until the test signals it. The engine is
 // already detached by startModelHost, so killing this process must not take
