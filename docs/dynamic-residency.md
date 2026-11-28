@@ -666,6 +666,8 @@ and puts engine state in a private temporary directory. Use `llamacpp` with
 a standalone GGUF or a whole GGUF directory plus `ggufFile` naming the first
 shard. Use `omlx` with a directory containing one model subdirectory named
 by `model`. Use `kapitsa` with the exact preconverted model directory.
+The Kapitsa smoke request disables thinking to leave its eight-token budget
+for the visible reply.
 The probe uses the oMLX build's default context. Set
 `requiredHeadroomGiB` to a conservative bound for the approved model and
 settings. Pin the interpreter and installed dependency manifest separately

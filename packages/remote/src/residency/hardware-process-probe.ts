@@ -572,6 +572,7 @@ async function measure(
     stream_options: { include_usage: true },
     max_tokens: MAX_COMPLETION_TOKENS,
     temperature: 0,
+    ...(plan.backend === "kapitsa" ? { chat_template_kwargs: { enable_thinking: false } } : {}),
   });
   const response = await directRequest(port, "/v1/chat/completions", boundedSignal, body);
   if (

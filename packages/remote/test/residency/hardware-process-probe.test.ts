@@ -48,6 +48,9 @@ Bun.serve({
     if (mode === "slow" && !delayed) { delayed = true; await Bun.sleep(1600); }
     const body = await req.json();
     if (body.model !== "fixture" || body.max_tokens !== 8) return Response.json({}, { status: 400 });
+    if (backend === "kapitsa" && body.chat_template_kwargs?.enable_thinking !== false) {
+      return Response.json({}, { status: 400 });
+    }
     return new Response([
       'data: {"choices":[{"delta":{"role":"assistant"}}]}',
       'data: {"model":"fixture","choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}',
