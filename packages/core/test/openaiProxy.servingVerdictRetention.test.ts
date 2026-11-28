@@ -227,3 +227,32 @@ test("an unexpired verdict survives the sweep and still serves cache hits", asyn
     t.cleanup();
   }
 });
+
+test("a verdict expiring exactly now is swept by a miss for another key", async () => {
+  const t = tempEnv();
+  try {
+    installClock();
+    const ttlMs = servingRouteReadinessTtlMs();
+    const t0 = clock;
+    const portA = fixturePort();
+    const portB = fixturePort();
+    writeModelHost(t.env, "a-host", "a-model", portA);
+    writeModelHost(t.env, "b-host", "b-model", portB);
+    const stub = installProxyFetchStub();
+
+    const firstA = await pinModel("a-model", t.env);
+    expect(firstA.status).toBe(200);
+    expect(servingVerdictCacheSize()).toBe(1);
+
+    // expiresAt == now: a hit requires expiresAt > now, so the sweep must
+    // treat this boundary as expired too.
+    clock = t0 + ttlMs;
+    const firstB = await pinModel("b-model", t.env);
+    expect(firstB.status).toBe(200);
+    expect(servingVerdictCacheSize()).toBe(1);
+    expect(stub.readyCalls(portA)).toHaveLength(1);
+    expect(stub.readyCalls(portB)).toHaveLength(1);
+  } finally {
+    t.cleanup();
+  }
+});

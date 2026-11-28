@@ -863,8 +863,8 @@ function servingReadinessVerdict(
     ...(servingReadinessSeam?.fetch !== undefined ? { fetch: servingReadinessSeam.fetch } : {}),
     timeoutMs: servingReadinessTimeoutMs(),
   }).catch(() => false);
-  for (const [key, entry] of servingVerdictCache) {
-    if (entry.expiresAt <= now) servingVerdictCache.delete(key);
+  for (const [key, cachedEntry] of servingVerdictCache) {
+    if (cachedEntry.expiresAt <= now) servingVerdictCache.delete(key);
   }
   servingVerdictCache.set(probeKey, { expiresAt: now + servingReadinessTtlMs(), verdict });
   return verdict;
