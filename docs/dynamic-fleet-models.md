@@ -135,6 +135,62 @@ in `llamactl qualification status <rel>` (`packages/cli/src/commands/qualificati
 `catalog add` cannot change an existing row: it refuses a rel already in any
 catalog with `Catalog already contains <rel>`.
 
+### Reading candidate rows with `catalog list` and `catalog status`
+
+`llamactl catalog list [all|builtin|custom] [--json|--tsv]` (the USAGE in
+`packages/cli/src/commands/catalog.ts`).
+
+Scope defaults to `all` and format to tsv. `all` prints the builtin rows first,
+then the custom rows (`listCatalog`, `packages/core/src/catalog.ts`).
+The TSV output has no header line. An empty list prints nothing and exits 0.
+
+Each row is the eight `curatedTsvFields` columns: `id`, `label`, `family`,
+`class`, `scope`, `rel`, `repo`, `format`. `formatCatalogRow` adds a ninth,
+tab-separated column of compact JSON holding only the meta keys the row sets,
+in `curatedMetaFields` order. A row that sets none prints eight columns. Every
+`z13-large-gpu` builtin row sets `residencyGroup` and `qualification`, so each
+prints the ninth column. That column is where the TSV shows availability,
+qualification stage and residency group. The column layout is in
+[tsv-schemas.md](tsv-schemas.md).
+
+`--json` prints a pretty JSON array of the entries. The meta keys are
+top-level fields of each entry (`availability`, `qualification`, `residencyGroup`,
+...), because `CuratedModel` extends the `CuratedMeta` shape
+(`packages/core/src/schemas.ts`). With `--node <node>`, the rows come from that
+node's `catalogList` procedure (`packages/remote/src/router.ts`), which adds an
+`installed` boolean to each entry. A local `--json` entry has no `installed`
+field. `--node all --json` prints the fan-out results instead of an entries
+array: one element per node, `{ node, ok, data }` with that node's entries in
+`data`, or `{ node, ok, error }` when the node failed (`runListFanOut`).
+
+These exit 1: `Unknown flag for catalog list: <flag>`, `Unexpected extra
+argument: <arg>`, `Unknown scope: <arg> (expected all | builtin | custom)`,
+`catalog list: remote call to '<node>' failed: <message>` when the remote call
+fails. With `--node all`, each TSV row is prefixed with the node name and a tab.
+A failing node prints `[<node>] error: <error>` on stderr, and the command exits
+2 when any node fails.
+
+A custom row whose column 9 does not parse is skipped, with
+`llamactl: skipping invalid catalog row in <file>:<line> rel=<rel> (<error>)`
+on stderr. `<error>` is `invalid meta JSON`, `meta must be a JSON object` or
+the schema's issue messages. The other rows still print and the command exits 0.
+Rows with fewer than seven columns, blank lines and `#` comments are skipped
+silently. Meta keys that are not in `curatedMetaFields` are dropped on load
+(`parseMetaColumn`).
+
+`llamactl catalog status <rel> [--json]` prints `rel=`, `installed=yes|no`,
+`quant=` and `catalog=builtin|custom|none`. On a catalog hit it adds indented
+`label=`, `family=`, `scope=` and `repo=` lines, then `class=`, `class_source=`
+and `hf_enabled=`, plus `hf_repo=` and `hf_pipeline=` when known
+(`printStatusReport`). `catalog=builtin` is reported whenever a builtin row has
+the rel. It reports no candidate metadata: neither the text nor `--json`
+(`StatusReport`) carries availability, qualification or residency group. Read
+those with `llamactl catalog list --json`, and the effective stage with
+`llamactl qualification status <rel>`. A missing rel prints
+`Usage: llamactl catalog status <rel> [--json]` and exits 1. `catalog status`
+has no node dispatch: it always reads the local catalog and the local
+`$LLAMA_CPP_MODELS`.
+
 ## Residency states and exclusion
 
 The residency state model exists as a library (#517). Since #662 the
