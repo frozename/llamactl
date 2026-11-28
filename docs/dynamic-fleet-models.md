@@ -1486,19 +1486,33 @@ A matrix cell is unscored when its `n_rows` is 0 or less.
 The matrix runner writes such a cell in two cases. When a model or judge
 boot fails or is refused, including a pre-launch gate refusal,
 `recordBootError` stores `n_rows` 0, `primary_metric_value` 0, `errors`
-1 and `per_class_metrics_json` `{}`. When a corpus fails to load,
-`runWorkloadCell` stores `n_rows` 0, `primary_metric_value` -1 and
-`per_class_metrics_json` `{"error":"corpus_load_failed"}` (verify
+1 and `per_class_metrics_json` `{"error":"<reason>"}`. The reason is
+`model boot failed: <first line of the boot error>` for a model and
+`judge <judge> boot failed: <first line of the boot error>` for a judge
+(verify `bootErrorReason` at `packages/eval/src/matrix/runner.ts`).
+When a corpus fails to load, `runWorkloadCell` stores `n_rows` 0,
+`primary_metric_value` -1 and `per_class_metrics_json`
+`{"error":"corpus_load_failed"}` (verify
 `packages/eval/src/matrix/runner.ts`).
 
-The boot error or refusal text goes only to the `[matrix] failed to boot
-...` warning; it is not stored on the cell.
+The reason is truncated on purpose: only the first line of the boot error
+is stored, so a llama-server stderr tail never lands on the cell. The
+full text still goes to the `[matrix] failed to boot ...` warning. So a
+boot error cell reads `no rows scored (model boot failed: <first line of
+the boot error>)`, and a corpus failure reads
+`no rows scored (corpus_load_failed)` (verify
+`packages/eval/src/matrix/report.ts`).
 
 `cellUnavailableReason` returns `no rows scored`, or `no rows scored
 (<error>)` when `per_class_metrics_json` carries a non-empty string
-`error`, so a boot error cell reads `no rows scored` and a corpus failure
-reads `no rows scored (corpus_load_failed)` (verify
-`packages/eval/src/matrix/report.ts`).
+`error`, so a boot error cell reads `no rows scored (model boot failed:
+<first line of the boot error>)` and a corpus failure reads `no rows
+scored (corpus_load_failed)`.
+
+An unreachable gufo arm reads `no rows scored (model boot failed: model
+<name>: engine gufo is not managed by eval and is not reachable at
+<host>:<port>; run the server externally)`; that engine text is copied
+byte-for-byte from `packages/eval/src/matrix/lifecycle.ts`.
 
 The matrix CLI writes the report for the run it just ran with `--report
 md|csv|both` and `--report-out <path>`, or for every run with
