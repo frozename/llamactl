@@ -33,12 +33,16 @@ Subcommands:
       agent dir, is written by the agent at most once per minute per
       token, and survives restarts; no file, no column.
   revoke <name> [--dir=<path>]
-      Drop the named token. The next request with it is refused.
+      Drop the named token. The next request with it is refused. The
+      token's recorded last use is dropped with it, along with any
+      record left by a token no longer in agent.yaml.
   rename <old> <new> [--json] [--dir=<path>]
       Rename a recorded token, keeping its hash and createdAt, so the
       token itself keeps working. The new name follows the add rules.
       Use it to move a legacy token named 'default' off the reserved
-      name; until then it is audited as token=named:default.
+      name; until then it is audited as token=named:default. The
+      token's recorded last use carries to the new name, and a record
+      left under the new name by a revoked token is dropped.
 
 With --json, one JSON record (or array) goes to stdout and every note
 goes to stderr. Tokens authenticate the agent's API routes immediately;
@@ -250,6 +254,41 @@ function lastUsedFor(
   return Date.parse(at) >= Date.parse(entry.createdAt) ? at : undefined;
 }
 
+/**
+ * The last-used labels that survive a rename or revoke (#218): the primary
+ * bearer, which agent.yaml names nowhere, plus every entry still recorded
+ * afterwards. Anything else is the record of a token that no longer exists.
+ */
+function survivingBearerLabels(entries: readonly agentConfigMod.AgentBearerToken[]): Set<string> {
+  const keep = new Set<string>([agentConfigMod.PRIMARY_BEARER_NAME]);
+  for (const e of entries) keep.add(agentConfigMod.namedBearerAuditLabel(e.name));
+  return keep;
+}
+/** The keep-set half of every last-used update this command makes. */
+function filterBearerLastUsed(
+  keep: ReadonlySet<string>,
+  current: agentConfigMod.BearerLastUsed,
+): agentConfigMod.BearerLastUsed {
+  const kept: agentConfigMod.BearerLastUsed = {};
+  for (const [label, at] of Object.entries(current)) {
+    if (keep.has(label)) kept[label] = at;
+  }
+  return kept;
+}
+
+/**
+ * Notes a failed bearer-last-used update. agent.yaml has already changed, so
+ * this is one stderr line naming the path (never a token, a hash or the map)
+ * and the command still exits 0; the stale record goes with the next rename
+ * or revoke.
+ */
+function reportLastUsedFailure(path: string, err: unknown): void {
+  const reason =
+    (err as NodeJS.ErrnoException).code ??
+    ((err as Error).message === "" ? "unknown error" : (err as Error).message);
+  process.stderr.write(`could not update bearer last use in ${path}: ${reason}\n`);
+}
+
 /** The listed entry's expiry column: empty with none, expires= while valid, expired= after. */
 function expiryColumn(entry: agentConfigMod.AgentBearerToken, t: number): string {
   if (entry.expiresAt === undefined) return "";
@@ -328,6 +367,24 @@ function tokenRename(
   if (renamed === null) return 1;
   agentConfigMod.saveAgentConfig({ ...state.config, bearerTokens: renamed }, state.configPath);
 
+  // The record follows the token, not the name it is stored under, and a
+  // revoked token's record under the new name must not be inherited.
+  const lastUsedPath = agentConfigMod.bearerLastUsedPath(flags.dir);
+  const keep = survivingBearerLabels(renamed);
+  const newLabel = agentConfigMod.namedBearerAuditLabel(newName);
+  const oldLabel = agentConfigMod.namedBearerAuditLabel(oldName);
+  try {
+    agentConfigMod.updateBearerLastUsed(lastUsedPath, (cur) => {
+      const kept = filterBearerLastUsed(keep, cur);
+      Reflect.deleteProperty(kept, newLabel);
+      const carried = cur[oldLabel];
+      if (carried !== undefined) kept[newLabel] = carried;
+      return kept;
+    });
+  } catch (err) {
+    reportLastUsedFailure(lastUsedPath, err);
+  }
+
   if (flags.json) {
     process.stdout.write(`${JSON.stringify({ renamed: oldName, to: newName })}\n`);
   } else {
@@ -355,6 +412,15 @@ function tokenRevoke(name: string | undefined, args: string[]): number {
   if (remaining.length > 0) updated.bearerTokens = remaining;
   else Reflect.deleteProperty(updated, "bearerTokens");
   agentConfigMod.saveAgentConfig(updated, state.configPath);
+
+  const lastUsedPath = agentConfigMod.bearerLastUsedPath(flags.dir);
+  try {
+    agentConfigMod.updateBearerLastUsed(lastUsedPath, (cur) =>
+      filterBearerLastUsed(survivingBearerLabels(remaining), cur),
+    );
+  } catch (err) {
+    reportLastUsedFailure(lastUsedPath, err);
+  }
 
   if (flags.json) {
     process.stdout.write(`${JSON.stringify({ revoked: name, remaining: remaining.length })}\n`);

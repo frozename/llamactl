@@ -26,6 +26,8 @@ describe("#522 runbook window eval launch refusal", () => {
     "Without `--url`, `llamactl eval run <model>` spawns its own sandbox engine in the CLI process, beside the window's engine, so when the local residency store exists on the host running the eval and the catalog row for `<model>` declares `z13-large-gpu`, it reads that store read-only and exits 1 without spawning: `eval run: residency lifecycle refused <model> downloaded -> loading: ExclusiveGroupOccupied: exclusive group z13-large-gpu is held by <member> in state <state>`.";
   const STEP8_SELF =
     "On the agent host the window's own workload is such a holder: `llamactl enable` in step 6 records its `loading`, `warming` or `ready` row in `z13-large-gpu`, and the check counts every occupying row, so an in-window `eval run` without `--url` refuses there (see [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop)).";
+  const HOSTED_REL_FALLBACK =
+    "When neither the inline nor stored ModelHost carries that label, `modelHostStart` takes the group from the catalog row of its first hosted rel; the inline rel wins over the stored rel, and a label always wins (#517).";
 
   // Kills: shipping #804's gate without runbook prose, dropping the
   // self-occupancy caveat, or stating the gate against the agent's store
@@ -62,6 +64,13 @@ describe("#522 runbook window eval launch refusal", () => {
       readOrEmpty(join(REPO, "docs/dynamic-residency.md")),
       "## Direct ModelHost start and stop",
     ).toContain("## Direct ModelHost start and stop");
+  });
+
+  // Kills: the linked operator runbook documenting only the ModelRun fallback.
+  test("the direct-start runbook documents the ModelHost hosted-rel fallback", () => {
+    expect(flat(readOrEmpty(join(REPO, "docs/dynamic-residency.md")))).toContain(
+      HOSTED_REL_FALLBACK,
+    );
   });
 
   // Kills: the doc claiming a gate the source dropped, a --url bypass that
@@ -112,17 +121,27 @@ describe("#522 runbook window eval launch refusal", () => {
     expect(residencyTemplates.length).toBeGreaterThan(0);
   });
 
-  // Kills: the self-occupancy claim going stale.
+  // Kills: the self-occupancy claim going stale, or modelHostStart dropping
+  // the inline hosted rel before group resolution.
   test("source: enable records the template group", () => {
     const routerSrc = readOrEmpty(join(REPO, "packages/remote/src/router.ts"));
     const applySrc = readOrEmpty(join(REPO, "packages/remote/src/workload/apply.ts"));
 
-    const optsBody = enclosingBody(routerSrc, "function directResidencyOpts");
+    const optsBody = flat(enclosingBody(routerSrc, "function directResidencyOpts"));
     expect(optsBody, "directResidencyOpts signature").not.toBe("");
-    expect(optsBody).toContain("group: directResidencyGroup(workload, labels)");
-    expect(routerSrc).toContain(
-      "directResidencyOpts(input.workload, input.manifest?.metadata.labels)",
-    );
+    expect(optsBody).toContain("group: directResidencyGroup(workload, labels");
+
+    const startAt = routerSrc.indexOf("modelHostStart: t.procedure");
+    const endAt = startAt === -1 ? -1 : routerSrc.indexOf("workloadDelete: t.procedure", startAt);
+    const startBlock = flat(startAt === -1 || endAt === -1 ? "" : routerSrc.slice(startAt, endAt));
+    expect(startBlock).toContain("directResidencyOpts(");
+    expect(startBlock).toContain("input.manifest?.metadata.labels");
+    expect(startBlock).toContain("input.manifest?.spec.hostedModels[0]?.rel");
+
+    const groupBody = flat(enclosingBody(routerSrc, "function directResidencyGroup"));
+    expect(groupBody, "directResidencyGroup signature").not.toBe("");
+    expect(groupBody).toContain("hostedModels[0]?.rel");
+    expect(groupBody).toContain("catalog.findByRel");
 
     const startBody = enclosingBody(applySrc, "async function startModelHostProcess");
     expect(startBody, "startModelHostProcess signature").not.toBe("");

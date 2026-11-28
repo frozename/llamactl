@@ -215,7 +215,7 @@ describe("recommendations remote", () => {
   });
 
   test("-h / --help: exit 0, zero stub calls", async () => {
-    for (const args of [["-h"], ["--help"]]) {
+    for (const args of [["-h"], ["--help"], ["all", "--help"], ["current", "-h"]]) {
       recCalls = [];
       const { result: code, stdout } = await captureProcessStreams(() => runRecommendations(args));
       expect(code).toBe(0);
