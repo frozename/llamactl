@@ -28,6 +28,7 @@ import {
   isScopeUnit,
   readScopePending,
   removeScopePendingIfOwned,
+  scopeRequiredRefusal,
   scopeStopNames,
   scopeUnitBase,
   scopeWrapperExpectation,
@@ -966,6 +967,17 @@ function startServerError(
   };
 }
 
+// Port-collision hint: when the probe kept seeing a non-503 HTTP status on
+// the health endpoint, something else is bound to the port and llama-server
+// is answering nobody. Name the status code so operators can lsof / pkill the
+// right process. Split out of startServerUnwrapped to keep that orchestrator
+// inside the cognitive-complexity gate.
+function readinessConflictHint(readyResult: PollReadyResult): string {
+  return readyResult.portConflict && readyResult.lastHttpCode
+    ? ` \u2014 health endpoint returned HTTP ${readyResult.lastHttpCode} repeatedly; another process is likely bound to this port (try: lsof -P -iTCP:PORT)`
+    : "";
+}
+
 /** Build the success result for an adopted (#806 phase 2) `startServer`. */
 function startServerAdopted(
   resolved: ResolvedEnv,
@@ -1613,6 +1625,18 @@ async function retryWithMmprojSafeFlags(
     ctx.launchPort,
     retryArgs,
   );
+  if (retryLaunch.refused !== undefined) {
+    return {
+      result: startServerError(
+        resolved,
+        launchEndpoint,
+        prepared.tunedProfile,
+        true,
+        retryLaunch.refused,
+      ),
+      readyResult: { outcome: "timeout" },
+    };
+  }
   const retryPid = retryLaunch.pid;
   ctx.abortKiller.targetPid = signalableLaunchPid(retryLaunch);
   const readyResult = await pollReady(
@@ -1816,18 +1840,30 @@ interface ScopePlan {
   env: NodeJS.ProcessEnv;
 }
 
+interface ScopedServerLaunchPlan {
+  launcher: EngineScopeLauncher;
+  plan: ScopePlan;
+}
+
+// #806 require mode: a required launcher turns a conflict or a failed resolve
+// into a refusal the caller surfaces instead of an unscoped spawn.
+type ScopePlanResult = ScopedServerLaunchPlan | { refused: string } | null;
+
 // Resolve whether this ModelRun launch runs in its own systemd user scope. A
 // null launcher, a null override, an env-conflict, or a failed capability
-// resolve all mean a direct spawn; the direct argv stays byte-identical.
+// resolve all mean a direct spawn; the direct argv stays byte-identical. A
+// required launcher refuses those two fallbacks instead.
 async function resolveScopePlan(
   opts: StartServerOptions,
   forceDirect: boolean,
-): Promise<{ launcher: EngineScopeLauncher; plan: ScopePlan } | null> {
+): Promise<ScopePlanResult> {
   if (forceDirect) return null;
   const launcher = opts.engineScope !== undefined ? opts.engineScope : getEngineScopeLauncher();
   if (launcher === null) return null;
+  const required = launcher.required === true;
   const shaped = shapeScopeEnv({ ...process.env }, process.env, []);
   if ("conflict" in shaped) {
+    if (required) return { refused: scopeRequiredRefusal(`env-conflict ${shaped.conflict}`) };
     opts.onEvent?.({
       type: "retry",
       reason: `engine scope env-conflict (${shaped.conflict}); spawning directly`,
@@ -1835,7 +1871,10 @@ async function resolveScopePlan(
     return null;
   }
   const resolved = await launcher.resolve(process.env);
-  if (!resolved.ok) return null;
+  if (!resolved.ok) {
+    if (required) return { refused: scopeRequiredRefusal(resolved.reason) };
+    return null;
+  }
   return {
     launcher,
     plan: {
@@ -1850,6 +1889,8 @@ interface RecordedServerLaunch {
   pid: number;
   /** True once the child has been reaped, so its pid must never be signalled. */
   reaped: boolean;
+  /** #806 require mode: set when a required scope refused the launch. */
+  refused?: string;
 }
 
 function signalableLaunchPid(launch: RecordedServerLaunch): number | null {
@@ -1868,7 +1909,12 @@ async function launchAndRecordServer(
   args: string[],
   forceDirect = false,
 ): Promise<RecordedServerLaunch> {
-  const scoped = await resolveScopePlan(opts, forceDirect);
+  const plan = await resolveScopePlan(opts, forceDirect);
+  if (plan !== null && "refused" in plan) {
+    // No spawn, no pid file, no state file: the required scope never opened.
+    return { pid: 0, reaped: true, refused: plan.refused };
+  }
+  const scoped = plan;
   const launched = await launchBackground({
     bin: target.bin,
     modelPath: target.modelPath,
@@ -1917,12 +1963,19 @@ async function recordScopedLaunch(
   launchPort: number | string,
   args: string[],
   launched: LaunchResult,
-  scoped: { launcher: EngineScopeLauncher; plan: ScopePlan },
+  scoped: ScopedServerLaunchPlan,
 ): Promise<RecordedServerLaunch> {
   const dir = workloadRuntimeDir(resolved, opts.key);
   const scopeUnit = launched.scope?.scopeUnit ?? "";
   if (launched.pid <= 0) {
     scoped.launcher.noteFailure();
+    if (scoped.launcher.required === true) {
+      return {
+        pid: launched.pid,
+        reaped: true,
+        refused: scopeRequiredRefusal("wrapper pid unavailable"),
+      };
+    }
     return await launchAndRecordServer(
       opts,
       resolved,
@@ -1973,6 +2026,15 @@ async function recordScopedLaunch(
   }
   removeServerRecordIfOwned(resolved, opts.key, launched.pid);
   scoped.launcher.noteFailure();
+  // #806 require mode: the gate opened, but a required scope never takes the
+  // direct spawn — the caller reports the refusal for the dead wrapper pid.
+  if (scoped.launcher.required === true) {
+    return {
+      pid: launched.pid,
+      reaped: launched.child.exitCode !== null || launched.child.signalCode !== null,
+      refused: scopeRequiredRefusal(describeScopeOutcome(outcome, scopeUnit)),
+    };
+  }
   opts.onEvent?.({
     type: "retry",
     reason: `engine scope ${scopeUnit} ${describeScopeOutcome(outcome)}; falling back to direct spawn`,
@@ -2089,6 +2151,9 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
     launchPort,
     launchArgs,
   );
+  if (launch.refused !== undefined) {
+    return startServerError(resolved, launchEndpoint, tunedProfile, false, launch.refused);
+  }
   const pid = launch.pid;
 
   // The per-call target follows ownership: first pid, no pid while stopping, then retry pid.
@@ -2140,14 +2205,7 @@ async function startServerUnwrapped(opts: StartServerOptions): Promise<StartServ
 
   if (outcome === "timeout") {
     opts.onEvent?.({ type: "timeout", pid: activePid });
-    // Port-collision hint: when the probe kept seeing a non-503 HTTP
-    // status on the health endpoint, something else is bound to the
-    // port and llama-server is answering nobody. Name the status
-    // code so operators can lsof / pkill the right process.
-    const conflictHint =
-      readyResult.portConflict && readyResult.lastHttpCode
-        ? ` \u2014 health endpoint returned HTTP ${readyResult.lastHttpCode} repeatedly; another process is likely bound to this port (try: lsof -P -iTCP:PORT)`
-        : "";
+    const conflictHint = readinessConflictHint(readyResult);
     return startServerError(
       resolved,
       launchEndpoint,

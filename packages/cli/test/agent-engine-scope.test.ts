@@ -59,3 +59,22 @@ test("agent serve engine scope defaults on and LLAMACTL_ENGINE_SCOPE=off omits i
   });
   expect("engineScope" in disabled).toBe(false);
 });
+
+test("agent serve LLAMACTL_ENGINE_SCOPE=require publishes the required engine scope", () => {
+  const dir = freshDir();
+  const cfg = seedConfig(dir);
+  const parsed = serveFlags([`--dir=${dir}`]);
+
+  const required = buildServeOptions(parsed, cfg, idleWiring, "node", {
+    LLAMACTL_ENGINE_SCOPE: "require",
+  });
+  expect(required.engineScope).toBe("require");
+
+  // Only the exact value selects require mode; anything else keeps the opt-in.
+  for (const value of ["REQUIRE", "required", "on", ""]) {
+    const other = buildServeOptions(parsed, cfg, idleWiring, "node", {
+      LLAMACTL_ENGINE_SCOPE: value,
+    });
+    expect(other.engineScope).toBe(true);
+  }
+});

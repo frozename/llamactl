@@ -383,6 +383,16 @@ export interface EngineScopeLauncher {
   unitSuffix(): string;
   noteFailure(): void;
   readonly establishTimeoutMs: number;
+  // #806 require mode: a required scope is an invariant, so a launch that
+  // cannot establish one is refused instead of falling back to a direct spawn.
+  // Absent means today's behavior: every precondition failure takes the direct
+  // spawn.
+  readonly required?: boolean;
+}
+
+/** The refusal both engine kinds raise when a required scope cannot be held. */
+export function scopeRequiredRefusal(detail: string): string {
+  return `engine scope required (${detail}); refusing direct spawn`;
 }
 
 export type ProbeRunner = (
@@ -399,6 +409,7 @@ export interface EngineScopeLauncherDeps {
   now?: () => number;
   unitSuffix?: () => string;
   establishTimeoutMs?: number;
+  required?: boolean;
 }
 
 function defaultIsSocket(path: string): boolean {
@@ -504,6 +515,7 @@ export function createEngineScopeLauncher(deps: EngineScopeLauncherDeps = {}): E
   return {
     establishTimeoutMs,
     unitSuffix,
+    required: deps.required === true,
     noteFailure(): void {
       negativeUntil = now() + SCOPE_NEGATIVE_TTL_MS;
       probeMemo = null;

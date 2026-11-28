@@ -307,8 +307,13 @@ export interface StartAgentOptions {
    * ModelRun engines each run in their own transient scope; `stop()` and
    * startup rollback restore the seam's previous value. On other platforms
    * the handle is null and every launch stays a direct spawn.
+   *
+   * `"require"` (#806 require mode) publishes a launcher that refuses every
+   * direct-spawn fallback: a scope that cannot be established fails the launch
+   * instead of booting an unscoped engine. Linux-only like the opt-in — on
+   * other platforms the handle is null and every launch stays a direct spawn.
    */
-  engineScope?: boolean;
+  engineScope?: boolean | "require";
   /**
    * Opt-in request-admission gate (#281 DF-08), absent by default. When set,
    * `startAgentServer` holds an admission slot for the whole response lifetime
@@ -1481,17 +1486,19 @@ function maybePublishResidencyLeases(
 
 /**
  * Prepares the opt-in engine-scope launcher (#806 phase 3). Returns null
- * unless `opts.engineScope` is true AND the platform is linux, so macOS
- * agents, tests and in-process applies never install a launcher and every
- * launch stays a byte-identical direct spawn. Like the residency seam,
- * `publish` installs the launcher only once the listener is up and `restore`
- * puts the previous value back on stop/rollback.
+ * unless `opts.engineScope` is true or `"require"` AND the platform is linux,
+ * so macOS agents, tests and in-process applies never install a launcher and
+ * every launch stays a byte-identical direct spawn. `"require"` builds a
+ * launcher that refuses the direct-spawn fallbacks (#806 require mode). Like
+ * the residency seam, `publish` installs the launcher only once the listener
+ * is up and `restore` puts the previous value back on stop/rollback.
  */
 export function maybePublishEngineScope(
   opts: Pick<StartAgentOptions, "engineScope">,
   platform: NodeJS.Platform = process.platform,
 ): { publish: () => void; restore: () => void } | null {
-  if (opts.engineScope !== true || platform !== "linux") return null;
+  if (opts.engineScope !== true && opts.engineScope !== "require") return null;
+  if (platform !== "linux") return null;
   // Captured at creation AND re-captured at publish: a rollback that runs
   // before publish must restore the pre-handle value, not a hard null that
   // would wipe a launcher another in-process agent already installed.
@@ -1499,7 +1506,9 @@ export function maybePublishEngineScope(
   return {
     publish: (): void => {
       previous = getEngineScopeLauncher();
-      setEngineScopeLauncher(createEngineScopeLauncher());
+      setEngineScopeLauncher(
+        createEngineScopeLauncher({ required: opts.engineScope === "require" }),
+      );
     },
     restore: (): void => {
       setEngineScopeLauncher(previous);
