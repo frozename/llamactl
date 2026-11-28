@@ -1,8 +1,10 @@
 import { OMLX_ACTIVITY_PATH } from "@llamactl/core/engines";
 import { type IncomingMessage, request } from "node:http";
-import { isIP } from "node:net";
+import { isIP, type Socket } from "node:net";
 import { Readable } from "node:stream";
 import { z } from "zod";
+
+import type { ConnectOmlxOwnerSocket } from "./omlx-owner-socket.js";
 
 import { buildBaseUrl } from "./engine-client.js";
 
@@ -67,7 +69,7 @@ function streamResponse(response: IncomingMessage): Response {
 
 export function createOmlxOwnerFetch(
   endpoint: { host: string; port: number },
-  options?: { inferenceKey: string },
+  options?: { inferenceKey?: string; connect?: ConnectOmlxOwnerSocket | undefined },
 ): typeof globalThis.fetch {
   const { host, port } = endpoint;
   const origin = new URL(buildBaseUrl(host, port)).origin;
@@ -93,23 +95,38 @@ export function createOmlxOwnerFetch(
     const headers = key === undefined ? new Headers(init?.headers) : inferenceHeaders(init, key);
 
     // Bun's ordinary fetch can proxy even a numeric loopback address.
-    const response = await new Promise<IncomingMessage>((resolve, reject) => {
-      const req = request(
-        {
-          hostname: host,
-          port,
-          path: url.pathname + url.search,
-          method: init?.method ?? "GET",
-          headers: Object.fromEntries(headers),
-          agent: false,
-          ...(init?.signal ? { signal: init.signal } : {}),
-        },
-        resolve,
-      );
-      req.once("error", reject);
-      req.end(typeof body === "string" ? body : undefined);
-    });
-    return key === undefined ? await readResponse(response) : streamResponse(response);
+    const socket = await options?.connect?.(init?.signal);
+    try {
+      init?.signal?.throwIfAborted();
+      const response = await new Promise<IncomingMessage>((resolve, reject) => {
+        const req = request(
+          {
+            hostname: host,
+            port,
+            path: url.pathname + url.search,
+            method: init?.method ?? "GET",
+            headers: Object.fromEntries(headers),
+            ...(socket === undefined
+              ? { agent: false }
+              : { createConnection: (): Socket => socket }),
+            ...(init?.signal ? { signal: init.signal } : {}),
+          },
+          (message) => {
+            message.once("close", () => socket?.destroy());
+            resolve(message);
+          },
+        );
+        req.once("error", (error) => {
+          socket?.destroy();
+          reject(error);
+        });
+        req.end(typeof body === "string" ? body : undefined);
+      });
+      return key === undefined ? await readResponse(response) : streamResponse(response);
+    } catch (error) {
+      socket?.destroy();
+      throw error;
+    }
   }
   return Object.assign(directFetch, { preconnect: (): void => undefined });
 }
@@ -119,16 +136,18 @@ export async function verifyOmlxOwnerAuthentication({
   apiKey,
   modelId,
   signal,
+  connect,
 }: {
   endpoint: { host: string; port: number };
   apiKey: string;
   modelId: string;
   signal: AbortSignal;
+  connect?: ConnectOmlxOwnerSocket | undefined;
 }): Promise<boolean> {
   if (!isPrivateHost(endpoint.host) || apiKey.trim().length === 0 || signal.aborted) return false;
   try {
     const base = buildBaseUrl(endpoint.host, endpoint.port);
-    const read = createOmlxOwnerFetch(endpoint);
+    const read = createOmlxOwnerFetch(endpoint, { connect });
     const owner = { signal, headers: { authorization: `Bearer ${apiKey}` } };
     const [anonymousStatus, anonymousModels, status, models] = await Promise.all([
       read(base + OMLX_ACTIVITY_PATH, { signal }),

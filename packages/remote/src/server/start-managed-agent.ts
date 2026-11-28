@@ -1,6 +1,7 @@
 import type { ManagedCapacitySample } from "@llamactl/core/resources/managed-capacity";
 
 import { type routingCatalog, rpcServer } from "@llamactl/core";
+import { readModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { resolve } from "node:path";
 
@@ -16,7 +17,9 @@ import {
 } from "../residency/target-admission-policy.js";
 import { existsSync } from "../safe-fs.js";
 import { liveLockHolder } from "../workload/lock.js";
+import { listModelHosts } from "../workload/modelhost-store.js";
 import { defaultWorkloadsDir } from "../workload/store.js";
+import { createNativeOmlxOwner } from "./omlx-native-owner.js";
 import { registerManagedColdModelRuns } from "./register-managed-cold-modelruns.js";
 import { type RunningAgent, type StartAgentOptions, startAgentServer } from "./serve.js";
 
@@ -87,6 +90,29 @@ async function stageColdModelRuns(
       };
 }
 
+function stageNativeOmlxOwner(
+  opts: StartAgentOptions,
+  deps: ManagedAgentDependencies,
+  resolved: ReturnType<typeof resolveEnv>,
+): ReturnType<typeof createNativeOmlxOwner> | undefined {
+  if (!opts.executionAdmission?.length || deps.selectEngineTransport !== undefined)
+    return undefined;
+  const known = listModelHosts(defaultWorkloadsDir(), () => undefined)
+    .filter(({ spec }) => spec.omlxNativeResidency !== undefined)
+    .map(({ metadata }) => metadata.name);
+  const ports = new Set(
+    opts.executionAdmission.flatMap(({ foregroundPorts, backgroundPorts }) => [
+      ...foregroundPorts,
+      ...backgroundPorts,
+    ]),
+  );
+  return createNativeOmlxOwner(
+    known,
+    ports,
+    (name) => readModelHostState({ name }, resolved)?.requiresOwnerTransport === true,
+  );
+}
+
 export async function startManagedAgentServer(
   opts: StartAgentOptions,
   nodeName: string | undefined,
@@ -120,6 +146,7 @@ export async function startManagedAgentServer(
         throw new Error("ManagedRpcServerPresent");
     };
     checkOtherWorkloads();
+    const nativeOwner = stageNativeOmlxOwner(opts, deps, resolved);
     const runtime = await openNodeManagedAdmission({
       nodeName,
       aliases: ["local"],
@@ -130,6 +157,7 @@ export async function startManagedAgentServer(
       verifyJournalPair: journals.verify,
       inferenceHolds,
       validateParkedCredit: deps.validateParkedCredit,
+      aroundOwnedLifecycle: nativeOwner?.run,
     });
     authority = runtime.authority;
     const refusal = runtime.verifyActivation();
@@ -157,7 +185,8 @@ export async function startManagedAgentServer(
       residencyLeases: true,
       managedLaunchAdmission: runtime.admission,
       managedInferenceHolds: inferenceHolds,
-      selectManagedEngineTransport: deps.selectEngineTransport,
+      selectManagedEngineTransport: deps.selectEngineTransport ?? nativeOwner?.select,
+      selectManagedEngineReadiness: nativeOwner?.readiness,
       ...(deps.ownerActivity === undefined ? {} : { managedOwnerActivity: deps.ownerActivity }),
     });
     return {

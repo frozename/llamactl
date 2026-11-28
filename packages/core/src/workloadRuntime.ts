@@ -24,6 +24,7 @@ import {
   qualificationOverridesFileFor,
   readQualificationOverrides,
 } from "./qualification/overrides.js";
+import { selectLocalEngineReadiness } from "./residency/engine-forwarder.js";
 import { isExperimentalRoute, QUALIFICATION_LABEL } from "./routing/capabilities.js";
 import {
   existsSync,
@@ -66,6 +67,7 @@ export interface LocalRoute {
    *  modelhost sidecar, ModelRun routes from llama-server.state; both are
    *  consumed by partitionServingRoutes and the openaiProxy routing gate. */
   readiness?: ModelHostReadiness;
+  requiresOwnerTransport?: true;
 }
 
 export interface PeerSnapshot {
@@ -473,6 +475,7 @@ function modelHostRoutesForDir(
       engine: state.engine,
       kind: "ModelHost",
       pid: hostPid,
+      ...(state.requiresOwnerTransport === true ? ({ requiresOwnerTransport: true } as const) : {}),
       ...(state.readiness !== undefined ? { readiness: state.readiness } : {}),
     });
   }
@@ -626,6 +629,16 @@ export function identifyLocalEngineAtTarget(
   };
 }
 
+function checkLocalRouteReadiness(
+  route: LocalRoute,
+  readiness: ModelHostReadiness,
+  opts: { fetch?: typeof globalThis.fetch; timeoutMs?: number },
+): Promise<boolean> {
+  const fetch = selectLocalEngineReadiness(route, readiness.path);
+  if (fetch === null) return Promise.resolve(false);
+  return checkServingReadiness(route, readiness, fetch === undefined ? opts : { ...opts, fetch });
+}
+
 /**
  * Partition local routes by declared serving readiness (#220). Routes
  * without a readiness declaration are ready with no I/O; declared probes
@@ -642,7 +655,7 @@ export async function partitionServingRoutes(
   const probes = new Map<string, Promise<boolean>>();
   for (const route of routes) {
     if (route.readiness === undefined || probes.has(keyOf(route))) continue;
-    probes.set(keyOf(route), checkServingReadiness(route, route.readiness, opts));
+    probes.set(keyOf(route), checkLocalRouteReadiness(route, route.readiness, opts));
   }
   const keys = [...probes.keys()];
   const verdicts = await Promise.all(probes.values());

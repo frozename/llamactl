@@ -54,6 +54,7 @@ import {
   type ColdEngineForwarder,
   getLocalEngineForwarder,
   type LocalEngineRequest,
+  selectLocalEngineReadiness,
   withLocalEngineBody,
 } from "./residency/engine-forwarder.js";
 import {
@@ -638,6 +639,7 @@ type RouteEntry = {
   kind: "ModelRun" | "ModelHost";
   pid?: number;
   engine: workloadRuntime.LocalRoute["engine"];
+  requiresOwnerTransport?: true;
   model: string;
   /** Catalog-qualified experimental (#518); kept for downstream consumers
    *  of the route entry, never routed by implicitly. */
@@ -867,11 +869,15 @@ function servingReadinessVerdict(
   readiness: ModelHostReadiness,
   probeKey: string,
 ): Promise<boolean> {
+  const selected =
+    entry.isPeer === true ? undefined : selectLocalEngineReadiness(entry, readiness.path);
+  if (selected === null) return Promise.resolve(false);
+  const fetchImpl = selected ?? servingReadinessSeam?.fetch;
   const now = servingReadinessNow();
   const cached = servingVerdictCache.get(probeKey);
   if (cached !== undefined && cached.expiresAt > now) return cached.verdict;
   const verdict = checkServingReadiness({ host: entry.host, port: entry.port }, readiness, {
-    ...(servingReadinessSeam?.fetch !== undefined ? { fetch: servingReadinessSeam.fetch } : {}),
+    ...(fetchImpl === undefined ? {} : { fetch: fetchImpl }),
     timeoutMs: servingReadinessTimeoutMs(),
   }).catch(() => false);
   servingVerdictCache.set(probeKey, { expiresAt: now + servingReadinessTtlMs(), verdict });
@@ -1148,6 +1154,7 @@ function routeEntryFor(route: workloadRuntime.ClusterRoute): RouteEntry {
     model: route.model,
     ...(isExperimentalRoute(route) ? { experimental: true as const } : {}),
     ...("pid" in route ? { pid: route.pid } : {}),
+    ...(route.requiresOwnerTransport === true ? { requiresOwnerTransport: true } : {}),
     ...peerFields,
   };
 }

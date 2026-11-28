@@ -366,6 +366,7 @@ export interface StartAgentOptions {
   executionAdmission?: ExecutionAdmissionConfig;
   managedInferenceHolds?: InferenceHolds;
   selectManagedEngineTransport?: SelectOwnerTransport | undefined;
+  selectManagedEngineReadiness?: Parameters<typeof installLocalEngineForwarder>[1];
   /** Trusted programmatic owner wiring. The host must verify that no ingress bypasses these admissions. */
   managedOwnerActivity?: { verifyExclusiveIngress: () => unknown };
   /**
@@ -1621,7 +1622,7 @@ function prepareExecutionHooks(opts: StartAgentOptions): {
     hooks: {
       publish: (): void => {
         scope?.publish();
-        uninstall = installLocalEngineForwarder(owner.forward);
+        uninstall = installLocalEngineForwarder(owner.forward, opts.selectManagedEngineReadiness);
         setOwnerAdmissionMetricsReader(owner.snapshot);
       },
       restore: (): void => {
@@ -1745,6 +1746,12 @@ async function finalFlushWindow(
 }
 
 function verifyManagedEngineTransportAdmission(opts: StartAgentOptions): void {
+  if (
+    opts.selectManagedEngineReadiness !== undefined &&
+    opts.selectManagedEngineTransport === undefined
+  ) {
+    throw new Error("ManagedEngineTransportAdmissionRequired");
+  }
   if (
     opts.selectManagedEngineTransport !== undefined &&
     (opts.noAuth === true || !opts.executionAdmission?.length)
