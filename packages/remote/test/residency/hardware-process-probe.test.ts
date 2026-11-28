@@ -491,24 +491,84 @@ test("occupied swap growth below the approved ceiling still aborts the live prob
   });
 });
 
-test("a guarded run with quiet existing swap can complete and release its engine", async () => {
-  expect(
-    await run(
-      { ...plan(), maxSwapUsedGiB: 3.25 },
-      {
-        execute: true,
-        readCapacity: () => capacity({ swapUsedBytes: 3 * GiB }),
-        readSwap: () => Promise.resolve(swapCounters()),
-      },
-    ),
-  ).toMatchObject({
-    status: "PASS",
-    launched: true,
-    existingSwap: { ceilingGiB: 3.25, baselineUsedBytes: 3 * GiB },
-    swapIo: { rate: { known: true, swapInBytesPerSec: 0, swapOutBytesPerSec: 0 } },
-    release: { processExited: true, portReleased: true, forced: false },
-  });
-});
+test.each([
+  {
+    condition: "gets a newer quiet sample",
+    changeAt: 0,
+    newer: true,
+    refusal: undefined,
+    reads: 2,
+  },
+  {
+    condition: "sees changed counters",
+    changeAt: 1,
+    newer: true,
+    refusal: "SwapIoUnknown",
+    reads: 1,
+  },
+  {
+    condition: "gets the same timestamp again",
+    changeAt: 0,
+    newer: false,
+    refusal: "SwapIoUnknown",
+    reads: 2,
+  },
+  {
+    condition: "gets a newer active sample",
+    changeAt: 2,
+    newer: true,
+    refusal: "SwapIoActive",
+    reads: 2,
+  },
+])(
+  "a swap read repeating the finish timestamp $condition",
+  async ({ changeAt, newer, refusal, reads }) => {
+    const input = { ...plan(), maxSwapUsedGiB: 3.25 };
+    const recovery = join(dirname(input.binary), "lock", "run.json");
+    let lastLiveObservation = 0;
+    let releasedReads = 0;
+    const readSwap = (): Promise<SwapCounterSample> => {
+      const { processGroup } = JSON.parse(readFileSync(recovery, "utf8")) as {
+        processGroup?: number;
+      };
+      if (processGroup !== undefined) {
+        try {
+          process.kill(processGroup, 0);
+        } catch {
+          releasedReads++;
+          return Promise.resolve({
+            ...swapCounters(releasedReads === changeAt ? 4096 : 0),
+            observedAtMs: lastLiveObservation + (releasedReads === 2 && newer ? 1 : 0),
+          });
+        }
+        lastLiveObservation = Date.now() - 2;
+        return Promise.resolve({ ...swapCounters(), observedAtMs: lastLiveObservation });
+      }
+      return Promise.resolve(swapCounters());
+    };
+
+    const evidence = await run(input, {
+      execute: true,
+      readCapacity: () => capacity({ swapUsedBytes: 3 * GiB }),
+      readSwap,
+    });
+    expect(evidence).toMatchObject({
+      status: refusal === undefined ? "PASS" : "FAIL",
+      ...(refusal === undefined ? {} : { reason: refusal }),
+      launched: true,
+      existingSwap: { ceilingGiB: 3.25, baselineUsedBytes: 3 * GiB },
+      release: { processExited: true, portReleased: true, forced: false },
+    });
+    expect(evidence.requests).toHaveLength(4);
+    expect(releasedReads).toBe(reads);
+    if (refusal === undefined) {
+      expect(evidence.swapIo).toMatchObject({
+        after: { observedAtMs: lastLiveObservation + 1 },
+        rate: { known: true, swapInBytesPerSec: 0, swapOutBytesPerSec: 0 },
+      });
+    }
+  },
+);
 
 test("the execution boundary blocks an opted-in launch if swap becomes active", async () => {
   let reads = 0;
@@ -527,6 +587,7 @@ test("the execution boundary blocks an opted-in launch if swap becomes active", 
 test("swap activity in the release samples prevents qualification", async () => {
   const input = { ...plan(), maxSwapUsedGiB: 3.25 };
   const recovery = join(dirname(input.binary), "lock", "run.json");
+  let lastLiveObservation = 0;
   const readSwap = (): Promise<SwapCounterSample> => {
     const { processGroup } = JSON.parse(readFileSync(recovery, "utf8")) as {
       processGroup?: number;
@@ -535,8 +596,10 @@ test("swap activity in the release samples prevents qualification", async () => 
       try {
         process.kill(processGroup, 0);
       } catch {
-        return Promise.resolve(swapCounters(4096));
+        return Promise.resolve({ ...swapCounters(4096), observedAtMs: lastLiveObservation + 1 });
       }
+      lastLiveObservation = Date.now() - 2;
+      return Promise.resolve({ ...swapCounters(), observedAtMs: lastLiveObservation });
     }
     return Promise.resolve(swapCounters());
   };

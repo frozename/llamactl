@@ -70,7 +70,10 @@ export interface HardwareProcessProbeOptions {
 
 type Admission = ReturnType<typeof projectManagedCapacity>;
 type SwapRead = () => Promise<SwapCounterSample | undefined>;
-type SwapCheck = (sample: SwapCounterSample | undefined) => string | undefined;
+type SwapCheck = (minimumIntervalMs?: number) => Promise<{
+  sample: SwapCounterSample | undefined;
+  refusal: string | undefined;
+}>;
 type Status = "NOT_RUN" | "BLOCKED" | "FAIL" | "PASS";
 type Sample = {
   state: "first-request" | "repeated-request";
@@ -667,7 +670,6 @@ function beginCapacityMonitor(
   read: () => ManagedCapacitySample | undefined,
   report: Evidence,
   controller: AbortController,
-  readSwap: SwapRead,
   checkSwap?: SwapCheck,
 ): () => Promise<void> {
   let pending: Promise<void> | undefined;
@@ -676,10 +678,9 @@ function beginCapacityMonitor(
     const refused = capacityCheck(read, report);
     if (refused !== undefined) controller.abort(refused);
     else if (pending === undefined && checkSwap !== undefined) {
-      pending = safeSwap(readSwap)
-        .then(checkSwap)
-        .then((failure) => {
-          if (failure !== undefined) controller.abort(failure);
+      pending = checkSwap()
+        .then(({ refusal }) => {
+          if (refusal !== undefined) controller.abort(refusal);
         })
         .finally(() => {
           pending = undefined;
@@ -736,37 +737,43 @@ async function beginQuietSwap(
   const before = await safeSwap(read);
   if (before?.status !== "ok") fail("SwapIoUnknown");
   let latest = before;
-  const check = (
-    after: SwapCounterSample | undefined,
-    minimumIntervalMs = 0,
-  ): string | undefined => {
-    if (after === undefined) return "SwapIoUnknown";
-    const evidence = swapEvidence(latest, after, 30_000);
+  const check: SwapCheck = async (minimumIntervalMs = 0) => {
+    let sample = await safeSwap(read);
+    if (minimumIntervalMs === 0 && sameClockSwapSample(latest, sample)) {
+      // Finish and release can share a millisecond. Require a new observation.
+      await delay(1);
+      sample = await safeSwap(read);
+    }
+    if (sample === undefined) return { sample, refusal: "SwapIoUnknown" };
+    const evidence = swapEvidence(latest, sample, 30_000);
     if (!report.launched) report.swapIo = evidence;
     const rate = evidence.rate;
-    if (!rate.known || rate.intervalMs < minimumIntervalMs) return "SwapIoUnknown";
-    if (rate.swapInBytesPerSec > 0 || rate.swapOutBytesPerSec > 0) return "SwapIoActive";
-    latest = after;
-    return undefined;
+    if (!rate.known || rate.intervalMs < minimumIntervalMs)
+      return { sample, refusal: "SwapIoUnknown" };
+    if (rate.swapInBytesPerSec > 0 || rate.swapOutBytesPerSec > 0)
+      return { sample, refusal: "SwapIoActive" };
+    latest = sample;
+    return { sample, refusal: undefined };
   };
   await delay(CAPACITY_INTERVAL_MS, undefined, { signal });
   requireCapacity(checkCapacity);
-  const refusal = check(await safeSwap(read), CAPACITY_INTERVAL_MS);
+  const { refusal } = await check(CAPACITY_INTERVAL_MS);
   if (refusal !== undefined) fail(refusal);
   signaled(signal);
   return { check, before };
 }
 
-async function recordSwapIo(
-  report: Evidence,
-  before: SwapCounterSample | undefined,
-  read: SwapRead,
-): Promise<SwapCounterSample | undefined> {
-  const after = await safeSwap(read);
-  if (before !== undefined && after !== undefined) {
-    report.swapIo = swapEvidence(before, after, 10 * 60_000);
-  }
-  return after;
+function sameClockSwapSample(
+  before: SwapCounterSample,
+  after: SwapCounterSample | undefined,
+): boolean {
+  return (
+    after?.status === "ok" &&
+    after.source === before.source &&
+    after.observedAtMs === before.observedAtMs &&
+    after.swapInBytes === before.swapInBytes &&
+    after.swapOutBytes === before.swapOutBytes
+  );
 }
 
 function safeToReleaseWorkspace(report: Evidence): boolean {
@@ -819,10 +826,14 @@ async function settleProbe(
   report.release = await release(run, port);
   const sample = safeCapacity(readCapacity);
   if (sample !== undefined) report.afterRelease = sample;
-  const afterSwap = await recordSwapIo(report, swapBefore, readSwap);
-  return checkSwap === undefined
-    ? undefined
-    : (inspectCapacity(sample, report) ?? checkSwap(afterSwap));
+  const swap =
+    checkSwap === undefined
+      ? { sample: await safeSwap(readSwap), refusal: undefined }
+      : await checkSwap();
+  if (swapBefore !== undefined && swap.sample !== undefined) {
+    report.swapIo = swapEvidence(swapBefore, swap.sample, 10 * 60_000);
+  }
+  return checkSwap === undefined ? undefined : (inspectCapacity(sample, report) ?? swap.refusal);
 }
 
 function requireCapacity(checkCapacity: () => string | undefined): void {
@@ -886,7 +897,7 @@ async function executeProbe(
     checkSwap = window.check;
     signaled(runSignal);
     if (!unchanged(pinned.inventory)) return block(report, "PinnedInputChanged");
-    stopMonitor = beginCapacityMonitor(readCapacity, report, controller, readSwap, checkSwap);
+    stopMonitor = beginCapacityMonitor(readCapacity, report, controller, checkSwap);
     const launchStarted = performance.now();
     run = start(plan, pinned.modelPath, runDir, port);
     report.launched = true;
@@ -895,7 +906,7 @@ async function executeProbe(
     await stopMonitor();
     const aborted: unknown = controller.signal.reason;
     if (typeof aborted === "string") fail(aborted);
-    failure = capacityCheck(readCapacity, report) ?? checkSwap?.(await safeSwap(readSwap));
+    failure = capacityCheck(readCapacity, report) ?? (await checkSwap?.())?.refusal;
     if (run.hasExited()) failure ??= "EngineExited";
     if (!unchanged(pinned.inventory)) failure ??= "PinnedInputChanged";
   } catch (error) {

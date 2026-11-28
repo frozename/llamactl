@@ -18,7 +18,11 @@ import {
   writeFileSync,
 } from "../../src/safe-fs.js";
 import { startModelHost, stopModelHost } from "../../src/server/modelhost.js";
-import { parseModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
+import {
+  modelHostPath,
+  parseModelHost,
+  saveModelHost,
+} from "../../src/workload/modelhost-store.js";
 
 const name = "omlx-cache-fixture";
 const rel = "fixture-model";
@@ -40,6 +44,7 @@ function installFixture(root: string): { binary: string; module: string } {
     `
 import argparse
 import json
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -71,7 +76,9 @@ def main():
     witness.write_text((args.paged_ssd_cache_dir or "") + "\\n" + (args.slot_save_path or ""))
     if args.paged_ssd_cache_dir:
         Path(args.paged_ssd_cache_dir, "cache.bin").touch()
-    HTTPServer((args.host, args.port), Handler).serve_forever()
+    server = HTTPServer((args.host, args.port), Handler)
+    print(f"fixture pid {os.getpid()} listening on {args.host}:{args.port}", flush=True)
+    server.serve_forever()
 `,
   );
   const binary = join(venv, "bin", "omlx");
@@ -115,6 +122,7 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
     key,
     env,
     runtimeDir: root.runtimeDir,
+    workloadsDir: join(root.devStorage, "desired"),
     identity: {
       processCommand(pid: number): string | null {
         const observed = defaultReadProcessCommand(pid);
@@ -128,6 +136,7 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
   };
   const legacy = join(root.runtimeDir, "workloads", name, ".omlx");
   const base = join(legacy, "managed-cache");
+  const bootLog = join(dirname(legacy), "modelhost.boot.log");
   const legacySettings = JSON.stringify({ cache: { enabled: true }, local: "keep" });
   mkdirSync(legacy, { recursive: true });
   writeFileSync(join(legacy, "settings.json"), legacySettings);
@@ -179,7 +188,17 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
       manifest: manifest(),
     });
   const currentPaths = async (): Promise<{ prefix: string; slot: string }> => {
-    expect(await start()).toMatchObject({ ok: true });
+    const began = performance.now();
+    const result = await start();
+    if (!result.ok) {
+      const elapsed = Math.round(performance.now() - began);
+      const log = existsSync(bootLog)
+        ? readFileSync(bootLog, "utf8").slice(-4096)
+        : "(no boot log)";
+      throw new Error(
+        `oMLX fixture boot failed after ${String(elapsed)} ms: ${JSON.stringify(result)}\n${log}`,
+      );
+    }
     const [prefix, slot] = readFileSync(join(base, "cache-witness.txt"), "utf8").split("\n");
     expect(prefix).toMatch(/\/cache-by-identity\/[a-f0-9]{64}\/prefix$/);
     expect(slot).toBe(prefix?.replace(/\/prefix$/, "/slots"));
@@ -187,8 +206,12 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
     if (!prefix || !slot) throw new Error("fixture has no namespaced paths");
     return { prefix, slot };
   };
+  const previousDefaultWorkloads = process.env["LLAMACTL_WORKLOADS_DIR"];
+  process.env["LLAMACTL_WORKLOADS_DIR"] = join(root.devStorage, "fallback-desired");
   try {
     const initial = await currentPaths();
+    expect(existsSync(modelHostPath(name))).toBe(false);
+    expect(existsSync(modelHostPath(name, options.workloadsDir))).toBe(true);
     writeFileSync(join(initial.slot, "request.slot"), "recorded slot");
     await stop();
     const settingsFile = join(base, "settings.json");
@@ -233,7 +256,6 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
     expect(changedEpoch).not.toEqual(changedPrecision);
     await stop();
 
-    const bootLog = join(dirname(legacy), "modelhost.boot.log");
     const priorDescriptors = openLogDescriptors(bootLog);
     const next = await start(() => {
       writeFileSync(file, "replacement during final admission");
@@ -248,7 +270,7 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
     expect(priorDescriptors).toBe(0);
     const fixtureEnv = {
       ...env,
-      LLAMACTL_WORKLOADS_DIR: join(root.devStorage, "desired"),
+      LLAMACTL_WORKLOADS_DIR: options.workloadsDir,
       LLAMACTL_RESIDENCY_STORE: join(root.devStorage, "operations.sqlite"),
     };
     const oldEnv = Object.entries(fixtureEnv).map(([name]) => [name, process.env[name]] as const);
@@ -366,7 +388,15 @@ test("the ModelHost reuses exact oMLX cache paths and rotates on every relevant 
     expect(existsSync(join(initial.prefix, "cache.bin"))).toBe(true);
     expect(readFileSync(join(initial.slot, "request.slot"), "utf8")).toBe("recorded slot");
   } finally {
-    await stop();
-    root.cleanup();
+    try {
+      await stop();
+    } finally {
+      if (previousDefaultWorkloads === undefined) {
+        Reflect.deleteProperty(process.env, "LLAMACTL_WORKLOADS_DIR");
+      } else {
+        process.env["LLAMACTL_WORKLOADS_DIR"] = previousDefaultWorkloads;
+      }
+      root.cleanup();
+    }
   }
 }, 25_000);

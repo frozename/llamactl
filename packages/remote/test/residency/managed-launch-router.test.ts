@@ -432,6 +432,7 @@ test("managed ModelHost reservation names a pinned manifest and runtime environm
 });
 
 test("workloadApply keeps the target admission gate through the local client", async () => {
+  using fixture = modelRunEnvironment(mkdtempSync(join(tmpdir(), "managed-router-local-apply-")));
   const run = mock(() =>
     Promise.resolve({ ran: false as const, detail: "fixture-managed-budget" }),
   );
