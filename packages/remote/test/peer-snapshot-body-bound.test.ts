@@ -36,9 +36,10 @@ function paddedSnapshot(totalBytes: number): Uint8Array {
 function meteredResponse(
   bytes: Uint8Array,
   headers?: Record<string, string>,
-): { response: Response; pulled: () => number } {
+): { response: Response; pulled: () => number; cancelled: () => boolean } {
   let offset = 0;
   let pulledBytes = 0;
+  let cancelCalled = false;
   const body = new ReadableStream<Uint8Array>(
     {
       pull(controller): void {
@@ -52,6 +53,9 @@ function meteredResponse(
         controller.enqueue(chunk);
         pulledBytes += chunk.byteLength;
       },
+      cancel(): void {
+        cancelCalled = true;
+      },
     },
     { highWaterMark: 0 },
   );
@@ -62,6 +66,43 @@ function meteredResponse(
     }),
     pulled(): number {
       return pulledBytes;
+    },
+    cancelled(): boolean {
+      return cancelCalled;
+    },
+  };
+}
+
+function stalledResponse(firstChunk: Uint8Array): Response {
+  let sent = false;
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(controller): Promise<void> | undefined {
+        if (!sent) {
+          sent = true;
+          controller.enqueue(firstChunk);
+          return undefined;
+        }
+        // Never enqueue or close again: the peer stalls mid-body.
+        return new Promise<void>(() => undefined);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+}
+
+function capturingFetch(response: Response): { fetch: typeof fetch; signal: () => AbortSignal } {
+  let captured: AbortSignal | undefined;
+  const stub = ((_input: Request | string | URL, init?: RequestInit) => {
+    captured = init?.signal ?? undefined;
+    return Promise.resolve(response);
+  }) as typeof fetch;
+  return {
+    fetch: stub,
+    signal(): AbortSignal {
+      if (captured === undefined) throw new Error("fetch was not called with an AbortSignal");
+      return captured;
     },
   };
 }
@@ -118,5 +159,27 @@ describe("peer snapshot body bound", () => {
       pressure: "NORMAL",
       fetchedAt: 1234,
     });
+  });
+
+  test("an over-cap streamed body cancels the stream and aborts the request (#367)", async () => {
+    const { response, cancelled } = meteredResponse(paddedSnapshot(CAP * 4));
+    const stub = capturingFetch(response);
+    globalThis.fetch = stub.fetch;
+
+    const snapshot = await __peerSnapshotInternals.fetchPeerSnapshot(directPeer, 1234);
+
+    expect(snapshot).toBeNull();
+    expect(cancelled()).toBe(true);
+    expect(stub.signal().aborted).toBe(true);
+  });
+
+  test("a stalled peer body is abandoned at the timeout and the request is aborted (#367)", async () => {
+    const stub = capturingFetch(stalledResponse(new TextEncoder().encode('{"workloads":[')));
+    globalThis.fetch = stub.fetch;
+
+    const snapshot = await __peerSnapshotInternals.fetchPeerSnapshot(directPeer, 1234, 50);
+
+    expect(snapshot).toBeNull();
+    expect(stub.signal().aborted).toBe(true);
   });
 });
