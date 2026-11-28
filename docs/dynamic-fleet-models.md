@@ -18,7 +18,13 @@ Open items:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged. `applyOne`
+  the plan did not observe is reconciled to downloaded only when it is `ready`
+  and `directWorkloadProvenDown` proves its workload down (for example a
+  crash-left keep-alive, or a ModelRun whose recorded pid is gone). Otherwise,
+  including any `loading`/`warming` row, it is kept, logged as
+  `[residency] lifecycle kept <model> <state> in group <group>: not proven down`,
+  and the replacement start is refused with `ExclusiveGroupOccupied` before the
+  engine runs, matching the direct-start rule. `applyOne`
   and `applyOneModelHost` (`packages/remote/src/workload/apply.ts`), which the
   reconciler calls, start a ModelRun's coordinator and a ModelHost through the
   node agent's `serverStart` and `modelHostStart` procedures, so the fenced
@@ -142,7 +148,13 @@ persists per-model states in its `residency_states` table:
   `residency_states` for its victims and replacements. A same-group occupant
   that the plan observed occupying refuses the start with
   `ExclusiveGroupOccupied` before the engine runs. A same-group occupying row
-  the plan did not observe is reconciled to downloaded and logged.
+  the plan did not observe is reconciled to downloaded only when it is `ready`
+  and `directWorkloadProvenDown` proves its workload down (for example a
+  crash-left keep-alive, or a ModelRun whose recorded pid is gone). Otherwise,
+  including any `loading`/`warming` row, it is kept, logged as
+  `[residency] lifecycle kept <model> <state> in group <group>: not proven down`,
+  and the replacement start is refused with `ExclusiveGroupOccupied` before the
+  engine runs, matching the direct-start rule.
   `llamactl residency status`, the `residencyStatus` procedure and the MCP
   tool now report the serving process's `residency_states` rows and any
   exclusive-group violation (`findExclusiveGroupViolations`, previously
@@ -451,6 +463,15 @@ entry's `qualification.stage` is the routing stage from
 `declared` entry whose id's routing stage is experimental carries
 `experimental: true`, the same flag a `data` entry carries. Neither array
 is routable, so the flags only report; they change no routing decision.
+
+The degraded stage is reported the same way (#518): a `data` entry whose
+winning route is degraded carries `degraded: true`, and a `declared` entry
+whose id's routing stage is degraded carries `degraded: true`; an
+experimental route or stage never also carries `degraded`, because
+experimental wins (`isDegradedRoute`, `packages/core/src/routing/capabilities.ts`).
+Because the legacy order ranks a healthy route ahead of a degraded one, a
+`data` entry carries the flag only when no healthy route serves the id.
+The flag only reports; it changes no routing decision.
 
 Peer-advertised qualification stages (#518): the `include=local-routes` fleet
 snapshot (`buildLocalRoutesSnapshot`, `packages/remote/src/routes/fleet.ts`)
@@ -857,7 +878,40 @@ unreadable; scope: serving-process)` or `Lifecycle:  unavailable
    `Lifecycle:` line.
 3. Stop production: `llamactl disable <production-workload>` (the
    node-local production workload name; it is not in this repo).
-   Confirm it reads Stopped in `llamactl get workloads`. With the lease
+   Confirm it reads Stopped in `llamactl get workloads`.
+   `llamactl get workloads` prints one row per manifest under the
+   columns `NAME`, `NODE`, `KIND`, `PHASE` and `REL`, where `KIND` is
+   `modelrun` or `modelhost` and `REL` is a ModelRun's target or a
+   ModelHost's hosted model rels joined by commas; an empty store
+   prints `No workloads registered.` and `--json` prints the rows as a
+   JSON array instead. A ModelHost whose `spec.node` is `local` reads
+   `Stopped` when it has no runtime state file, `Unreachable` when a
+   state file exists but its endpoint does not answer, `Foreign` when
+   the endpoint answers but its recorded pid is not alive or another
+   pid holds its port, and `Running` otherwise; any other ModelHost,
+   including every z13 template (`node: z13`) even when llamactl runs
+   on z13 itself, reads what its node's agent reports: `Running`,
+   `Stopped`, `unknown` when the node cannot confirm the recorded pid,
+   or `Unreachable` when the node query fails or misses its deadline
+   (10 s by default, or the node's `rpcTimeouts.queryMs` in the
+   kubeconfig). A ModelRun reads `Foreign` when a process llamactl did
+   not record answers on its port, `Running` when its node reports the
+   server up on the manifest's target, `Mismatch` when it is up on
+   another rel, `Stopped` otherwise, including when the node cannot
+   confirm the recorded pid, and `Unreachable` when the node query
+   fails or misses its deadline; a gateway ModelRun shows its stored
+   phase, `Pending` when none was written. Below the table, a
+   non-loopback ModelHost adds a `warning: modelhost/<name> binds an
+   unauthenticated engine to <host:port>` line, an externally managed
+   ModelHost adds a `note: modelhost/<name> is managed by <controller>`
+   line, and a row whose node query failed adds `unreachable:
+   <kind>/<name> on node <node>, last answered <time|never>: <error>`.
+   `Stopped` confirms the stop only when `llamactl describe workload
+   <production-workload>` shows no `"identityUnknown": true` under
+   `LiveStatus:`, because a ModelRun whose recorded pid cannot be
+   confirmed also reads `Stopped` while its process may still be
+   resident; `Unreachable`, `Foreign` and `unknown` never prove the
+   process is gone. With the lease
    registry on (`LLAMACTL_RESIDENCY_LEASES`), the node stop fence can
    refuse a disable: `llamactl disable` exits 1 with `disable:
 serverStop refused: <reason>: <ids>` for a ModelRun (the `: <ids>`
@@ -892,6 +946,31 @@ force-unload <workload> --reason <text> --yes --node <name>`, after
    this node; retry after it settles" (#741; see
    [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop)).
 7. Wait for the readiness probe, then `llamactl describe workload <name>`.
+   For a ModelHost, `llamactl describe workload <name>` prints the
+   manifest as `Name:`, `Kind:`, `Node:`, `Engine:`, `Binary:`,
+   `Models:`, `Endpoint:`, `Enabled:`, `ExtraArgs:` and
+   `RestartPolicy:` lines, an `IdleHold:` line only when the manifest
+   carries the idle hold, then its history (for a `local` host a
+   `Source:` line and the conditions only when the node reports them;
+   for any other host always a `Source: controller history` line, then
+   a `NodeHistory:` line when the node reports its own conditions), and
+   last a `LiveStatus:` block holding the node's `modelHostStatus`
+   JSON. It prints no `PHASE` column: the engine is up when
+   `LiveStatus:` carries `"state": "Running"` with its `"pid"`;
+   `"state": "Stopped"` without `"identityUnknown": true` means no live
+   recorded process, `"state": "Stopped"` with `"identityUnknown": true`
+   means the node cannot confirm the recorded pid and the engine may
+   still be resident, and an `"error"` object means the node query failed
+   or missed its deadline. For a ModelRun it prints `Name:`, `Node:`,
+   `Target:`, `ExtraArgs:` and `RestartPolicy:` lines, an optional
+   `IdleHold:` line, a `Status:` line reading
+   `phase=<phase> endpoint=<endpoint|none> pid=<pid|none> since=<time>`
+   when the manifest has a stored status, and the node's `serverStatus` JSON
+   under `LiveStatus:`, whose `"state"` is `"up"` or `"down"`;
+   `"down"` with `"identityUnknown": true` means the recorded pid
+   cannot be confirmed and the server may still be resident, an
+   `"error"` object means the node query failed or missed its deadline,
+   and the `Status:` line is the stored status, not a live probe.
 8. Run the eval against the engine the window started, with `--url`
    pointing at it: `llamactl eval perf --url <http://...> --engine
 <llamacpp|omlx|gufo|kapitsa> --model <id>` for perf evidence (see
@@ -913,10 +992,14 @@ held by <member> in state <state>`. On the agent host the window's
    [dynamic-residency.md](dynamic-residency.md#direct-modelhost-start-and-stop)).
 9. Exit the window: `llamactl disable <name>`, then
    `llamactl enable <production-workload>`, then verify Running and
-   readiness. A disable is never blocked by this bookkeeping and at
-   worst logs "not recorded" (#741). The stop fence is separate from
-   this bookkeeping and can refuse the exit-step disable the same way
-   (see step 3). After `llamactl disable <name>` and before
+   readiness. Verify Running as `Running` in the `PHASE` column of
+   `llamactl get workloads` for the production workload and, in
+   `llamactl describe workload <production-workload>`,
+   `"state": "Running"` under `LiveStatus:` for a ModelHost or
+   `"state": "up"` for a ModelRun. A disable is never blocked by this
+   bookkeeping and at worst logs "not recorded" (#741). The stop fence is
+   separate from this bookkeeping and can refuse the exit-step disable the
+   same way (see step 3). After `llamactl disable <name>` and before
    `llamactl enable <production-workload>`, run
    `llamactl residency status --node <node>` again. A confirmed stop walks
    the window workload's row `ready` -> `draining` -> `unloading` ->
@@ -1543,19 +1626,33 @@ A matrix cell is unscored when its `n_rows` is 0 or less.
 The matrix runner writes such a cell in two cases. When a model or judge
 boot fails or is refused, including a pre-launch gate refusal,
 `recordBootError` stores `n_rows` 0, `primary_metric_value` 0, `errors`
-1 and `per_class_metrics_json` `{}`. When a corpus fails to load,
-`runWorkloadCell` stores `n_rows` 0, `primary_metric_value` -1 and
-`per_class_metrics_json` `{"error":"corpus_load_failed"}` (verify
+1 and `per_class_metrics_json` `{"error":"<reason>"}`. The reason is
+`model boot failed: <first line of the boot error>` for a model and
+`judge <judge> boot failed: <first line of the boot error>` for a judge
+(verify `bootErrorReason` at `packages/eval/src/matrix/runner.ts`).
+When a corpus fails to load, `runWorkloadCell` stores `n_rows` 0,
+`primary_metric_value` -1 and `per_class_metrics_json`
+`{"error":"corpus_load_failed"}` (verify
 `packages/eval/src/matrix/runner.ts`).
 
-The boot error or refusal text goes only to the `[matrix] failed to boot
-...` warning; it is not stored on the cell.
+The reason is truncated on purpose: only the first line of the boot error
+is stored, so a llama-server stderr tail never lands on the cell. The
+full text still goes to the `[matrix] failed to boot ...` warning. So a
+boot error cell reads `no rows scored (model boot failed: <first line of
+the boot error>)`, and a corpus failure reads
+`no rows scored (corpus_load_failed)` (verify
+`packages/eval/src/matrix/report.ts`).
 
 `cellUnavailableReason` returns `no rows scored`, or `no rows scored
 (<error>)` when `per_class_metrics_json` carries a non-empty string
-`error`, so a boot error cell reads `no rows scored` and a corpus failure
-reads `no rows scored (corpus_load_failed)` (verify
-`packages/eval/src/matrix/report.ts`).
+`error`, so a boot error cell reads `no rows scored (model boot failed:
+<first line of the boot error>)` and a corpus failure reads `no rows
+scored (corpus_load_failed)`.
+
+An unreachable gufo arm reads `no rows scored (model boot failed: model
+<name>: engine gufo is not managed by eval and is not reachable at
+<host>:<port>; run the server externally)`; that engine text is copied
+byte-for-byte from `packages/eval/src/matrix/lifecycle.ts`.
 
 The matrix CLI writes the report for the run it just ran with `--report
 md|csv|both` and `--report-out <path>`, or for every run with
