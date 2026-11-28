@@ -16,6 +16,12 @@ import { loadWorkloadByNameAny, withWorkloadsMutex } from "../workload/store.js"
 import { managedProfileMemberProfiles } from "./managed-profile-selection.js";
 
 export const RESIDENCY_CONTROL_TOOL = "llamactl.residency.control";
+export const RESIDENCY_CALIBRATION_KEY_TOOL = "llamactl.residency.calibration-key";
+
+export const residencyCalibrationKeyInput = z.strictObject({
+  node: z.string().min(1),
+  workload: ModelHostManifestSchema.shape.metadata.shape.name,
+});
 
 export const residencyControlInput = z
   .strictObject({

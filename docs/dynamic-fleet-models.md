@@ -265,7 +265,8 @@ collected on the local host into `measured-calibrations.sqlite` under the
 llamactl state directory (`DEV_STORAGE` or `~/.llamactl`). The report has
 three fields.
 
-- `key` contains `artifactRevision`, `engine`, `engineBuild`, `ctx`,
+- Use the owner-provided `key` below for managed launches. A structured
+  `key` contains `artifactRevision`, `engine`, `engineBuild`, `ctx`,
   `kvType`, `speculative`, `prefillBatch`, and `concurrency`. Set
   `speculative.mode` to `none`, `mtp`, or `draft`, with the draft
   `artifactRevision` for `draft`.
@@ -282,11 +283,38 @@ three fields.
   measured allocation.
 - `options` contains `minSamples` and `overheadFraction`.
 
-The existing `admit measure` RSS cache is separate. The ModelHost admission
-adapter can read the calibration store when its caller supplies the exact
-key and a NodeRun residency policy. It uses only a fresh match for the local
-node. Automatic launch identity discovery and sample collection remain
-separate work.
+For managed admission, obtain the key from the worker that owns the
+workload. The command returns the key, declared charge, charge for the next
+managed launch, and whether fresh evidence matched.
+
+```sh
+llamactl --node <owner> admit calibration-key <workload>
+```
+
+MCP clients can call `llamactl.residency.calibration-key` with `node` and `workload`.
+
+Use the returned `key` object in the report and import it locally on that
+same worker. Measure a launch of the inputs described by the key and
+check the key again afterward. A changed key requires a fresh measurement. The key fingerprints the
+owner's ID, assembled engine arguments and environment plus observed local
+generations of the executable, weights, and supported auxiliary inputs.
+This includes the configured context, KV types, prefill, concurrency,
+and recognized draft, MTP and adapter paths. Select the native engine
+executable directly. Keep the qualified build and its runtime libraries
+immutable during a calibration.
+
+The managed key currently covers local llama.cpp ModelRun and ModelHost
+launches and Kapitsa ModelHosts with supported arguments. Unsupported
+flags, dependency layouts, or engine settings leave the key unavailable.
+The owner rechecks matching evidence during apply, profile preflight and
+launch. Fresh evidence can raise the declared charge. An invalid or
+expired report leaves the declared charge in effect. An unreadable store
+refuses admission for a launch with a supported key. The physical
+capacity gate and host reserve apply to either charge.
+
+The structured key format remains available for reports consumed by
+operators and callers supplying their own verified key resolver. The
+`admit measure` RSS cache remains separate.
 
 ### Residency lifecycle states
 

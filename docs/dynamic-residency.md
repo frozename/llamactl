@@ -12,12 +12,12 @@ On `main`:
 - `residency status`, `residency plan` and `residency apply-profile`.
 - Profile-switch cancel and boot crash recovery.
 - Request admission caps and declared-model projection with readiness gates.
+- Managed launch calibration for supported llama.cpp and Kapitsa inputs.
 
 Library-only (no production wiring):
 
 - The llama.cpp sleep/wake clients and the sleep-status recorder.
 - The managed oMLX residency and the oMLX cache-retention decision.
-- The memory-calibration artifact-revision gate.
 
 ## Residency store and backups
 
@@ -340,7 +340,7 @@ Ordinary declared routes compare the manifest name and aliases with the serving 
 
 For a configured managed cold ModelRun, startup verifies the selected regular-file artifact against its declared SHA-256 and byte ceiling. The admission path checks that the staged file generation remains current. A ready peer declaration also needs the live process generation and serving route. Changing the artifact, target policy or execution-group configuration withdraws that proof.
 
-`MemoryCalibrationKey.artifactRevision` (`packages/core/src/resources/memory.ts`) gates measured envelopes only through an injected hook, and `getCandidateCalibrationKey` has no production caller. For oMLX, the cache identity (modelId, `engineBuild`, `cacheEpoch`, the artifact `sha256` or size/mtime, and settings) lives in `packages/core/src/engines/omlx-cache-identity.ts`, and `decideOmlxCacheRetention` has no production caller. For native load/unload, `createManagedOmlxResidency` has no production caller (`packages/remote/src/residency/omlx-managed.ts`).
+The managed owner can use fresh, matching measured envelopes for supported llama.cpp and Kapitsa launches. See [Recording a measured memory envelope](dynamic-fleet-models.md#recording-a-measured-memory-envelope) for key export, import, and valid input scopes. The standalone ModelHost adapter accepts a structured key with `artifactRevision` (defined in `packages/core/src/resources/memory.ts`). Its injected `getCandidateCalibrationKey` has no production caller. For oMLX, the cache identity (modelId, `engineBuild`, `cacheEpoch`, the artifact `sha256` or size/mtime, and settings) lives in `packages/core/src/engines/omlx-cache-identity.ts`, and `decideOmlxCacheRetention` has no production caller. For native load/unload, `createManagedOmlxResidency` has no production caller (`packages/remote/src/residency/omlx-managed.ts`).
 
 ## llama.cpp sleep and wake
 

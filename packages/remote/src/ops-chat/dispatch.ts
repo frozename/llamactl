@@ -7,7 +7,9 @@ import {
   type ResidencyApplyProfileResult,
 } from "../residency/apply-profile.js";
 import {
+  RESIDENCY_CALIBRATION_KEY_TOOL,
   RESIDENCY_CONTROL_TOOL,
+  residencyCalibrationKeyInput,
   residencyControlInput,
   type ResidencyControlResult,
 } from "../residency/managed-operator-control.js";
@@ -170,6 +172,7 @@ export const OPS_CHAT_TOOLS = [
     tier: "mutation-destructive",
     surfaces: OPS_CHAT_AND_MCP_SURFACES,
   },
+  { name: RESIDENCY_CALIBRATION_KEY_TOOL, tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
   {
     name: RESIDENCY_CONTROL_TOOL,
     tier: "mutation-destructive",
@@ -341,6 +344,8 @@ async function executeReadTool(
       return await caller.nodeFacts();
     case "llamactl.node.budget":
       return await caller.nodeBudget({ node: requireString(args, "node") });
+    case RESIDENCY_CALIBRATION_KEY_TOOL:
+      return await caller.residencyCalibrationKey(residencyCalibrationKeyInput.parse(args));
     case "llamactl.residency.status":
       return await caller.residencyStatus({ node: requireString(args, "node") });
     case "llamactl.residency.plan":
