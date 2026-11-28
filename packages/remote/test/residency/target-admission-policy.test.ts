@@ -19,8 +19,10 @@ import { join } from "node:path";
 
 import type { InferenceHolds, InferenceHoldState } from "../../src/residency/inference-holds.js";
 
+import { openAdmissionStore } from "../../src/residency/admission-store.js";
 import { openLocalAdmissionRuntime } from "../../src/residency/process-generation.js";
 import {
+  managedAdmissionStorePath,
   type ManagedCapacityAudit,
   openNodeManagedAdmission,
 } from "../../src/residency/target-admission-policy.js";
@@ -329,6 +331,7 @@ async function withCapacityOwner(
   ) => Promise<void>,
   onCapacityAudit?: (entry: ManagedCapacityAudit) => void,
   inferenceHolds?: InferenceHolds,
+  validateParkedCredit?: Parameters<typeof openNodeManagedAdmission>[0]["validateParkedCredit"],
 ): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-physical-owner-"));
   const runtimeDir = join(dir, "runtime");
@@ -344,6 +347,7 @@ async function withCapacityOwner(
       readCapacity,
       ...(onCapacityAudit === undefined ? {} : { onCapacityAudit }),
       ...(inferenceHolds === undefined ? {} : { inferenceHolds }),
+      validateParkedCredit,
       nowMs: () => now,
     });
     await run(
@@ -914,4 +918,90 @@ test("the owner charges exact calibrated inputs at apply, profile, and launch an
     }
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("unverified parked memory credit fences new allocations until the full charge returns", async () => {
+  let provenFence: string | undefined;
+  await withCapacityOwner(
+    () => localCapacity(56),
+    async (policy, request, runtimeDir) => {
+      const { admission, authority } = policy;
+      const resident = authority.admit({
+        runtimeKey: "prior-native-model",
+        specDigest: "native-fixture",
+        kind: "ModelHost",
+        allocationGiB: 8,
+      });
+      if (resident.kind !== "admitted") throw new Error("fixture claim refused");
+      expect(authority.completeReady(resident.claimId, resident.fenceToken)).toBe(true);
+      const db = openAdmissionStore({
+        path: managedAdmissionStorePath(runtimeDir),
+        requireExisting: true,
+      });
+      try {
+        const row = db.snapshot()[0];
+        if (row === undefined) throw new Error("fixture claim missing");
+        const starting = db.transitionNative(row, { kind: "begin-park" });
+        if (starting === undefined) throw new Error("fixture park intent refused");
+        const parked = db.transitionNative(starting, { kind: "park", residualGiB: 2 });
+        if (parked === undefined) throw new Error("fixture park refused");
+        expect(parked.allocationGiB).toBe(2);
+        expect(policy.verifyActivation()).toBeUndefined();
+        const signal = new AbortController().signal;
+        const start = mock(() =>
+          Promise.resolve({ ran: false as const, detail: "fixture entered launch" }),
+        );
+
+        expect(await admission.run(request, signal, start)).toEqual({
+          ran: false,
+          detail: "ManagedNativeCreditUnverified",
+        });
+        expect(start).not.toHaveBeenCalled();
+        const apply = mock(() => Promise.resolve("fixture entered apply"));
+        const rejected = await admission
+          .withDesiredManifest?.(request.launch.manifest, apply)
+          .catch((error: unknown) => error);
+        expect(rejected).toEqual(new Error("ManagedNativeCreditUnverified"));
+        expect(apply).not.toHaveBeenCalled();
+        expect(admission.preflightProfile?.({ victims: [], retained: [], replacements: [] })).toBe(
+          "ManagedNativeCreditUnverified",
+        );
+
+        expect(
+          authority.admit({
+            runtimeKey: "bypass-attempt",
+            specDigest: "fixture",
+            kind: "ModelHost",
+            allocationGiB: 1,
+          }),
+        ).toMatchObject({ kind: "refuse", reason: "ManagedNativeCreditUnverified" });
+
+        provenFence = parked.fenceToken;
+        expect(await admission.run(request, signal, start)).toEqual({
+          ran: false,
+          detail: "fixture entered launch",
+        });
+        provenFence = undefined;
+        expect(await admission.run(request, signal, start)).toEqual({
+          ran: false,
+          detail: "ManagedNativeCreditUnverified",
+        });
+
+        expect(db.transitionNative(parked, { kind: "uncertain" })).toMatchObject({
+          state: "uncertain",
+          allocationGiB: 8,
+        });
+        expect(await admission.run(request, signal, start)).toEqual({
+          ran: false,
+          detail: "fixture entered launch",
+        });
+        expect(start).toHaveBeenCalledTimes(2);
+      } finally {
+        db.close();
+      }
+    },
+    undefined,
+    undefined,
+    (claim) => claim.fenceToken === provenFence,
+  );
 });

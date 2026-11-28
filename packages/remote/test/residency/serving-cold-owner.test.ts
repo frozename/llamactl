@@ -17,6 +17,7 @@ import { readManagedProfileSelection } from "../../src/residency/managed-profile
 import { createOwnerAdmission } from "../../src/residency/owner-admission.js";
 import { peerColdBodyDigest } from "../../src/residency/peer-cold.js";
 import { openResidencyOperationStore } from "../../src/residency/store.js";
+import { openNodeManagedAdmission } from "../../src/residency/target-admission-policy.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { hashToken } from "../../src/server/auth.js";
 import { prepareColdOwnerMount } from "../../src/server/cold-owner-mount.js";
@@ -1042,6 +1043,106 @@ spec:
     await running?.stop();
     await engine.stop(true);
     process.env["LLAMACTL_UNIFIED_PROXY"] = previous;
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+async function markUnsettledClaim(): Promise<void> {
+  const setup = await openNodeManagedAdmission({ nodeName: NODE, ...capacity });
+  try {
+    const pending = setup.authority.admit({
+      runtimeKey: WORKLOAD,
+      specDigest: "native-inference-claim",
+      kind: "ModelHost",
+      allocationGiB: 8,
+    });
+    if (pending.kind !== "admitted") throw new Error("fixture claim refused");
+    expect(
+      setup.authority.failUncertain(pending.claimId, pending.fenceToken, "native receipt lost"),
+    ).toBe(true);
+  } finally {
+    setup.authority.close();
+  }
+}
+
+test("the serving owner blocks an unsettled durable oMLX claim through agent restart", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-native-serving-owner-"));
+  const restore = isolate(dir);
+  let running: RunningAgent | undefined;
+  let warmDials = 0;
+  const send = (): Promise<Response> => {
+    warmDials++;
+    return Promise.resolve(new Response(null, { status: 204 }));
+  };
+  const opts = {
+    bindHost: "127.0.0.1",
+    port: 0,
+    tokenHash: hashToken(TOKEN),
+    advertiseMdns: false,
+    executionAdmission: [CAP],
+  };
+  try {
+    await markUnsettledClaim();
+
+    for (let restart = 0; restart < 2; restart++) {
+      running = await startManagedAgentServer(opts, NODE, capacity);
+      expect(getResidencyLeaseRegistry()?.snapshot(WORKLOAD).phase).toBe("open");
+      const response = await dispatchWarm(send);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        error: { code: "managed_residency_unverified" },
+      });
+      expect(warmDials).toBe(0);
+      await running.stop();
+      running = undefined;
+    }
+  } finally {
+    await running?.stop();
+    restore();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a queued warm request rechecks its durable claim after admission", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-native-queued-owner-"));
+  const restore = isolate(dir);
+  const entered = Promise.withResolvers<undefined>();
+  const completion = Promise.withResolvers<Response>();
+  let running: RunningAgent | undefined;
+  let lateDials = 0;
+  try {
+    running = await startManagedAgentServer(
+      {
+        bindHost: "127.0.0.1",
+        port: 0,
+        tokenHash: hashToken(TOKEN),
+        advertiseMdns: false,
+        executionAdmission: [CAP],
+      },
+      NODE,
+      capacity,
+    );
+    const served = dispatchWarm(() => {
+      entered.resolve(undefined);
+      return completion.promise;
+    });
+    await entered.promise;
+    const queued = dispatchWarm(() => {
+      lateDials++;
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+
+    await markUnsettledClaim();
+    completion.resolve(new Response(null, { status: 204 }));
+    expect((await served).status).toBe(204);
+    const result = await queued;
+    expect(result.status).toBe(503);
+    expect(await result.json()).toMatchObject({ error: { code: "managed_residency_unverified" } });
+    expect(lateDials).toBe(0);
+  } finally {
+    completion.resolve(new Response(null, { status: 204 }));
+    await running?.stop();
     restore();
     rmSync(dir, { recursive: true, force: true });
   }

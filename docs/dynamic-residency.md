@@ -262,6 +262,14 @@ fences that workload from inference and stop. The CLI and console show the
 hold alongside its memory claim. Preserve both journals for recovery and
 verify the previous engine generation before any manual intervention.
 
+The owner checks the durable memory claim before each engine dial, including
+after a request leaves the queue. A pending or uncertain claim blocks inference
+even if a restarted agent has a fresh lease registry. A discounted native
+parked claim needs current owner proof before new allocations are admitted.
+The allocation transaction checks that proof against the locked ledger rows.
+If proof is lost, restoring the full charge or verifying release makes the
+ledger usable for allocation again.
+
 For co-resident models, add `executionAdmission` to the owning node's
 `agent.yaml`. Each group matches local engine ports after routing. Local
 HTTP proxy traffic, local tRPC chat and the default local-model Worker
