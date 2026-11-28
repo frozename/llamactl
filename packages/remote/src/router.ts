@@ -929,16 +929,36 @@ function residencyPlanFor(
 // Resolves the direct-start/stop residency group: an inline manifest's label
 // wins (it may differ from the store), else the stored ModelHost's label. A
 // load failure means no group, so a deleted manifest never aborts the dep.
-function directResidencyGroup(
+// Only a start passes `start` (#517): an unlabelled start then falls back to
+// the catalog `residencyGroup` of its first hosted rel, the inline rel winning
+// over the stored rel; an uncatalogued rel means no group. Stops pass no
+// `start` and keep the label-only group.
+export function directResidencyGroup(
   workload: string,
   labels: Readonly<Record<string, string>> | undefined,
+  start?: { inlineRel: string | undefined },
 ): string | undefined {
   const fromInput = labels !== undefined ? residencyGroupLabelOf(labels) : undefined;
   if (fromInput !== undefined) {
     return fromInput;
   }
+  let stored: ReturnType<typeof modelHostStoreMod.loadModelHostByName> | undefined;
   try {
-    return residencyGroupLabelOf(modelHostStoreMod.loadModelHostByName(workload).metadata.labels);
+    stored = modelHostStoreMod.loadModelHostByName(workload);
+  } catch {
+    stored = undefined;
+  }
+  const fromStored =
+    stored !== undefined ? residencyGroupLabelOf(stored.metadata.labels) : undefined;
+  if (fromStored !== undefined || start === undefined) {
+    return fromStored;
+  }
+  const rel = start.inlineRel ?? stored?.spec.hostedModels[0]?.rel;
+  if (rel === undefined) {
+    return undefined;
+  }
+  try {
+    return catalog.findByRel(rel)?.residencyGroup;
   } catch {
     return undefined;
   }
@@ -1038,10 +1058,11 @@ export function directWorkloadProvenDown(model: string): boolean {
 function directResidencyOpts(
   workload: string,
   labels: Readonly<Record<string, string>> | undefined,
+  start?: { inlineRel: string | undefined },
 ): DirectLifecycleOpts {
   return {
     storePath: defaultResidencyStorePath(),
-    group: directResidencyGroup(workload, labels),
+    group: directResidencyGroup(workload, labels, start),
     isProvenDown: directWorkloadProvenDown,
     isRunning: (model) => statusModelHost({ key: { name: model } }).state === "Running",
     log: (line): void => {
@@ -3832,7 +3853,9 @@ export const router = t.router({
                 emit(event);
               },
             }),
-          directResidencyOpts(input.workload, manifest?.metadata.labels),
+          directResidencyOpts(input.workload, manifest?.metadata.labels, {
+            inlineRel: manifest?.spec.hostedModels[0]?.rel,
+          }),
         );
       const outcome =
         managed === undefined
