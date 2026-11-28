@@ -637,24 +637,30 @@ class CompositeWorkloadStopRefused extends Error {}
 
 /**
  * Format a node stop-fence refusal out of a `serverStop` result, or null
- * when the result reports no fence refusal (#520). A fence refuses with
+ * when the result reports no refusal at all (#520). A fence refuses with
  * `stopped: false` plus a structured `refused` object whose `reason` is a
  * string; the `: <ids>` suffix is dropped when no ids come back. A bare
- * `stopped: false` without `refused` is NOT a fence refusal — remaining
- * scope. Formatting mirrors modelRunStopRefusalLine (cli workload.ts) and
- * serverStopDeleteRefusal (router.ts).
+ * `stopped: false` is treated as an unverified stop: the node could not
+ * verify the pid identity, could not confirm the termination, or did not
+ * run the stop at all. The "(pid identity unverifiable)" wording
+ * deliberately mirrors stopWorkloadForDelete (router.ts) and
+ * modelRunStopRefusalLine (cli workload.ts), including the stop-did-not-
+ * run fallback, so every unverified stop reads the same to the operator.
  */
 function serverStopRefusalDetail(node: string, outcome: unknown): string | null {
   if (outcome === null || typeof outcome !== "object") return null;
   const o = outcome as { stopped?: unknown; refused?: unknown };
   if (o.stopped !== false) return null;
-  if (o.refused === null || typeof o.refused !== "object") return null;
-  const refused = o.refused as { reason?: unknown; active?: unknown };
-  if (typeof refused.reason !== "string") return null;
-  const ids = Array.isArray(refused.active)
-    ? refused.active.filter((x): x is string => typeof x === "string")
-    : [];
-  return `serverStop on ${node} refused (${refused.reason}${ids.length > 0 ? `: ${ids.join(", ")}` : ""})`;
+  if (o.refused !== null && typeof o.refused === "object") {
+    const refused = o.refused as { reason?: unknown; active?: unknown };
+    if (typeof refused.reason === "string") {
+      const ids = Array.isArray(refused.active)
+        ? refused.active.filter((x): x is string => typeof x === "string")
+        : [];
+      return `serverStop on ${node} refused (${refused.reason}${ids.length > 0 ? `: ${ids.join(", ")}` : ""})`;
+    }
+  }
+  return `serverStop on ${node} refused (pid identity unverifiable)`;
 }
 
 // ---- rollback -------------------------------------------------------------

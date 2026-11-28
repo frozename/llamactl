@@ -169,7 +169,8 @@ const DEFAULT_CAPABILITIES_BY_PROVIDER: Record<string, string[]> = {
 /**
  * Best bench record (highest gen_ts) for a given agent machine. Used
  * to steer embersynth's priority + optimization metadata toward the
- * fastest local node.
+ * fastest local node. A healthy row outranks a degraded one
+ * regardless of gen_ts (#518).
  */
 interface BenchSummary {
   genTps: number;
@@ -178,28 +179,46 @@ interface BenchSummary {
   rel: string;
 }
 
+/** Strict `>` so a tie keeps the earlier row, as the single-best scorer did. */
+function fasterOf(candidate: BenchSummary, current: BenchSummary | null): BenchSummary {
+  return current === null || candidate.genTps > current.genTps ? candidate : current;
+}
+
+/** Row → summary, or null when the row carries no usable gen_ts signal. */
+function benchSummaryForRow(r: BenchHistoryEntry): BenchSummary | null {
+  const gen = Number.parseFloat(r.gen_ts);
+  if (!Number.isFinite(gen) || gen <= 0) return null;
+  const ctxNum = Number.parseInt(r.ctx, 10);
+  return {
+    genTps: gen,
+    contextWindow: Number.isFinite(ctxNum) && ctxNum > 0 ? ctxNum : null,
+    rel: r.rel,
+  };
+}
+
 function summarizeBenchForMachine(
   rows: readonly BenchHistoryEntry[],
   machine: string,
   stages: ReadonlyMap<string, string>,
 ): BenchSummary | null {
-  let best: BenchSummary | null = null;
+  let bestHealthy: BenchSummary | null = null;
+  let bestDegraded: BenchSummary | null = null;
   for (const r of rows) {
     // #518: the bench scorer must never pick an experimental rel as a fusion
     // node's modelId, because that becomes an implicit pin under every
     // fusion-* profile, including the private-first task-kind fallback.
-    if (r.machine !== machine || stages.get(r.rel) === "experimental") continue;
-    const gen = Number.parseFloat(r.gen_ts);
-    if (!Number.isFinite(gen) || gen <= 0) continue;
-    if (best && gen <= best.genTps) continue;
-    const ctxNum = Number.parseInt(r.ctx, 10);
-    best = {
-      genTps: gen,
-      contextWindow: Number.isFinite(ctxNum) && ctxNum > 0 ? ctxNum : null,
-      rel: r.rel,
-    };
+    const stage = stages.get(r.rel);
+    if (r.machine !== machine || stage === "experimental") continue;
+    const summary = benchSummaryForRow(r);
+    if (!summary) continue;
+    // #518: a degraded rel is a demotion, not an exclusion. It never becomes a
+    // fusion node's modelId while a healthy bench row exists for the machine,
+    // which matches legacyQualificationTier in
+    // packages/core/src/routing/capabilities.ts.
+    if (stage === "degraded") bestDegraded = fasterOf(summary, bestDegraded);
+    else bestHealthy = fasterOf(summary, bestHealthy);
   }
-  return best;
+  return bestHealthy ?? bestDegraded;
 }
 
 /**

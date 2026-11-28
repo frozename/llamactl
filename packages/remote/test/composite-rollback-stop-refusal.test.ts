@@ -283,6 +283,8 @@ const R2_MESSAGE =
   "rollback failed for workload/local: serverStop on local refused (SessionsUnknown); workload left running";
 const R3_MESSAGE =
   "rollback failed for workload/local: serverStop on local refused (LeasesActive: lease-1); workload left running";
+const UNVERIFIED_ROLLBACK =
+  "rollback failed for workload/local: serverStop on local refused (pid identity unverifiable); workload left running";
 
 // ---- tests -----------------------------------------------------------------
 
@@ -383,6 +385,72 @@ describe("applyComposite rollback — stop-fence refusal (#520)", () => {
     expect(persistedComponent?.message).toBe(R1_MESSAGE);
   });
 
+  test("R5: a bare stopped:false without a pid is an unverifiable rollback stop refusal", async () => {
+    // Kills: treating stopped:false as a successful rollback whenever the
+    // structured fence detail is absent — the pid identity is unverifiable,
+    // so rollback must surface the still-running workload.
+    const { result, events, stopKeys } = await runRollbackApply(() =>
+      Promise.resolve({ stopped: false, pid: null, killed: false }),
+    );
+
+    expectCommonRollbackOutcome(result, stopKeys);
+    expect(workloadFailureEvents(events)).toEqual([
+      {
+        type: "component-failed",
+        ref: { kind: "workload", name: "local" },
+        message: UNVERIFIED_ROLLBACK,
+      },
+    ]);
+    expect(workloadStatus(result)?.state).toBe("Ready");
+    expect(workloadStatus(result)?.message).toBe(UNVERIFIED_ROLLBACK);
+  });
+
+  test("R6: a bare stopped:false with a pid is an unverifiable rollback stop refusal", async () => {
+    // Kills: trusting a returned pid as proof of teardown when serverStop
+    // explicitly reports stopped:false without a verified fence detail.
+    const { result, events, stopKeys } = await runRollbackApply(() =>
+      Promise.resolve({ stopped: false, pid: 4242, killed: false }),
+    );
+
+    expectCommonRollbackOutcome(result, stopKeys);
+    expect(workloadFailureEvents(events)).toEqual([
+      {
+        type: "component-failed",
+        ref: { kind: "workload", name: "local" },
+        message: UNVERIFIED_ROLLBACK,
+      },
+    ]);
+    expect(workloadStatus(result)?.state).toBe("Ready");
+    expect(workloadStatus(result)?.message).toBe(UNVERIFIED_ROLLBACK);
+  });
+
+  test("R7: an unverifiable rollback stop refusal is persisted on the still-Ready workload", async () => {
+    // Kills: emitting the rollback failure without recording it in the
+    // persisted composite status, or flipping the still-running workload to
+    // Failed.
+    const { result, stopKeys } = await runRollbackApply(() =>
+      Promise.resolve({ stopped: false, pid: null, killed: false }),
+    );
+
+    expectCommonRollbackOutcome(result, stopKeys);
+    const componentResult = result.componentResults.find(
+      (c) => c.ref.kind === "workload" && c.ref.name === "local",
+    );
+    expect(componentResult?.state).toBe("Ready");
+    expect(componentResult?.message).toBe(UNVERIFIED_ROLLBACK);
+
+    const statusComponent = workloadStatus(result);
+    expect(statusComponent?.state).toBe("Ready");
+    expect(statusComponent?.message).toBe(UNVERIFIED_ROLLBACK);
+
+    const persisted = loadComposite("stack", compositesDir);
+    const persistedComponent = persisted?.status?.components.find(
+      (c) => c.ref.kind === "workload" && c.ref.name === "local",
+    );
+    expect(persistedComponent?.state).toBe("Ready");
+    expect(persistedComponent?.message).toBe(UNVERIFIED_ROLLBACK);
+  });
+
   test("G1 guard: a verified stop emits no workload rollback failure or status message", async () => {
     const { result, events, stopKeys } = await runRollbackApply(() =>
       Promise.resolve({ stopped: true, pid: 1, killed: false }),
@@ -398,15 +466,6 @@ describe("applyComposite rollback — stop-fence refusal (#520)", () => {
   test("G2 guard: a rejected stop stays swallowed as a transport failure", async () => {
     const { result, events, stopKeys } = await runRollbackApply(() =>
       Promise.reject(new Error("transport down")),
-    );
-
-    expectCommonRollbackOutcome(result, stopKeys);
-    expect(workloadFailureEvents(events)).toEqual([]);
-  });
-
-  test("G3 guard: stopped:false without refused is not a fence refusal", async () => {
-    const { result, events, stopKeys } = await runRollbackApply(() =>
-      Promise.resolve({ stopped: false, pid: null, killed: false }),
     );
 
     expectCommonRollbackOutcome(result, stopKeys);
