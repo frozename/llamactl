@@ -413,14 +413,33 @@ async function runIoPhase(run: PerfSuiteRun, io0: IoSample): Promise<void> {
   await run.step(["ssd_read_bytes", "ssd_write_bytes"], async () => {
     const io1 = await run.sampleIo();
     if (io0.kind === "sample" && io1.kind === "sample") {
-      run.record(
-        "ssd_read_bytes",
-        okMetric(Math.max(0, io1.value.readBytes - io0.value.readBytes)),
-      );
-      run.record(
-        "ssd_write_bytes",
-        okMetric(Math.max(0, io1.value.writeBytes - io0.value.writeBytes)),
-      );
+      const readDelta = io1.value.readBytes - io0.value.readBytes;
+      const writeDelta = io1.value.writeBytes - io0.value.writeBytes;
+      if (readDelta < 0 || writeDelta < 0) {
+        run.record(
+          "ssd_read_bytes",
+          unavailableMetric(
+            `I/O counters decreased between the start and end samples (read_bytes ${String(
+              io0.value.readBytes,
+            )} -> ${String(io1.value.readBytes)}, write_bytes ${String(
+              io0.value.writeBytes,
+            )} -> ${String(io1.value.writeBytes)}); the sampled process likely restarted`,
+          ),
+        );
+        run.record(
+          "ssd_write_bytes",
+          unavailableMetric(
+            `I/O counters decreased between the start and end samples (read_bytes ${String(
+              io0.value.readBytes,
+            )} -> ${String(io1.value.readBytes)}, write_bytes ${String(
+              io0.value.writeBytes,
+            )} -> ${String(io1.value.writeBytes)}); the sampled process likely restarted`,
+          ),
+        );
+        return;
+      }
+      run.record("ssd_read_bytes", okMetric(readDelta));
+      run.record("ssd_write_bytes", okMetric(writeDelta));
       return;
     }
     let failureMessage: string | undefined;

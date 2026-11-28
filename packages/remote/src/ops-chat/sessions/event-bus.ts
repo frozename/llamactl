@@ -34,8 +34,25 @@ export const sessionEventBus = {
   subscribe(sessionId: string, listener: (event: JournalEvent) => void): () => void {
     const e = ensure(sessionId);
     e.on("event", listener);
+    let released = false;
     return () => {
+      if (released) return;
+      released = true;
       e.off("event", listener);
+      // Watching a finished (or never-opened) session went through
+      // `ensure`, so the map entry survived the unsubscribe forever.
+      // Drop it once this is the emitter still in the map (a `close()`
+      // may have replaced it, and a stale unsubscribe must not evict
+      // the newer channel), the run is over (`openChannels` is what
+      // marks a live run, and only `close()` releases it) and no other
+      // subscriber is left on this emitter.
+      if (
+        channels.get(sessionId) === e &&
+        !openChannels.has(sessionId) &&
+        e.listenerCount("event") === 0
+      ) {
+        channels.delete(sessionId);
+      }
     };
   },
   subscribeAll(listener: (sessionId: string, event: JournalEvent) => void): () => void {
@@ -61,5 +78,14 @@ export const sessionEventBus = {
    */
   listenerCount(sessionId: string): number {
     return channels.get(sessionId)?.listenerCount("event") ?? 0;
+  },
+  /**
+   * Number of session channels the bus is holding in memory. Exposed so
+   * the #367 retention checks can assert that subscribing to a finished
+   * or unknown session and unsubscribing leaves the map no larger than
+   * it was. Read-only: it changes no state.
+   */
+  retainedChannelCount(): number {
+    return channels.size;
   },
 };

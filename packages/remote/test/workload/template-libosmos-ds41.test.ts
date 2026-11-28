@@ -233,6 +233,9 @@ for (const arm of ARMS) {
       writeFileSync(stub, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       mkdirSync(dirname(join(models, arm.rel)), { recursive: true });
       writeFileSync(join(models, arm.rel), "");
+      mkdirSync(dirname(join(models, arm.picks)), { recursive: true });
+      writeFileSync(join(models, arm.picks), "");
+      mkdirSync(join(models, DRAFTER), { recursive: true });
       const spec = { ...specForEngine(manifest.spec), binary: stub };
       expect(ENGINES.libosmos.validateSpec(spec)).toEqual({ ok: true });
       await ENGINES.libosmos.prepareLaunch!(spec, {

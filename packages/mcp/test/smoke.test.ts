@@ -212,8 +212,6 @@ const MCP_ONLY_EXCLUDED = new Set([
   "llamactl.residency.applyProfile",
   // operator cancel of an in-flight profile switch (#284 DF-11, this PR); Ops Chat projection is a later slice
   "llamactl.residency.cancelOperation",
-  // operator idle-eviction dry-run preview (#519); Ops Chat projection is a later slice
-  "llamactl.residency.evictIdle",
   // operator-only destructive override (#278 DF-05); deliberately not in Ops Chat dispatch
   "llamactl.residency.forceUnload",
   // operator per-session release (#520 / #284 DF-11); deliberately not in Ops Chat dispatch
