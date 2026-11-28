@@ -1819,15 +1819,16 @@ async function awaitOwnedOmlxReadiness(
   const readiness = ownedOmlxReadiness(manifest);
   const connect = connectOmlxOwnerSocket(endpoint, pid, ticket.processCurrent);
   const currentLaunch = (): boolean => ticket.current() && auth.verifyLaunchInputs();
+  const binding = {
+    endpoint,
+    modelId: auth.modelId,
+    modelPath: auth.modelPath,
+    artifactRevision: auth.artifactRevision,
+    runtimeGeneration: ticket.runtime.birthId,
+    stillCurrent: ticket.processCurrent,
+  };
   const bootReady = await loadInitiallyOwnedOmlx({
-    binding: {
-      endpoint,
-      modelId: auth.modelId,
-      modelPath: auth.modelPath,
-      artifactRevision: auth.artifactRevision,
-      runtimeGeneration: ticket.runtime.birthId,
-      stillCurrent: ticket.processCurrent,
-    },
+    binding,
     apiKey: auth.apiKey,
     readiness,
     verifyReservation: currentLaunch,
@@ -1838,17 +1839,26 @@ async function awaitOwnedOmlxReadiness(
   if (!bootReady) throw new Error("ManagedNativeOmlxReadinessUnverified");
   const specHash = computeModelHostSpecHash(specForHash(manifest.spec));
   return (): void => {
-    owner.register(manifest.metadata.name, endpoint, auth.apiKey, readiness.path, connect, () => {
-      const state = readModelHostState(opts.key, resolved);
-      return (
-        state?.pid === pid &&
-        state.requiresOwnerTransport === true &&
-        state.specHash === specHash &&
-        state.host === endpoint.host &&
-        state.port === endpoint.port &&
-        auth.verify() &&
-        ticket.processCurrent()
-      );
+    owner.register({
+      apiKey: auth.apiKey,
+      binding,
+      connect,
+      readiness,
+      runtime: ticket.runtime,
+      specHash,
+      verifyLaunchInputs: () => auth.verifyLaunchInputs(),
+      current(): boolean {
+        const state = readModelHostState(opts.key, resolved);
+        return (
+          state?.pid === pid &&
+          state.requiresOwnerTransport === true &&
+          state.specHash === specHash &&
+          state.host === endpoint.host &&
+          state.port === endpoint.port &&
+          auth.verify() &&
+          ticket.processCurrent()
+        );
+      },
     });
   };
 }
@@ -2430,10 +2440,13 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
   if (!state) return await stopStartingRecord(opts, resolved);
   // Teardown signals the whole process group — the worst place to act on a
   // recycled pid — so the recorded pid is verified against its pid file
-  // (the identity anchor, written before the sidecar) and corroborated by
-  // the engine's argv0 first.
+  // (the identity anchor, written before the sidecar). A private oMLX
+  // launch has durable birth evidence even when the optional process title is absent.
   const recordPath = modelhostPidFile(resolved, opts.key);
-  const identity = hostIdentityDeps(state.engine, opts.identity, state.binaryNames);
+  const identity =
+    state.requiresOwnerTransport === true && opts.identity?.verifyGeneration !== undefined
+      ? opts.identity
+      : hostIdentityDeps(state.engine, opts.identity, state.binaryNames);
   const verdict = verifyPidFile(recordPath, state.pid, identity);
   if (verdict === "unknown") {
     return {
@@ -2527,7 +2540,7 @@ function omlxParkedProbeIdentity(
   const state = readModelHostState(opts.key, resolved);
   if (
     state?.engine !== "omlx" ||
-    state.pid !== pid ||
+    (pid === undefined ? state.requiresOwnerTransport !== true : state.pid !== pid) ||
     !state.specHash ||
     !Number.isFinite(Date.parse(state.startedAt)) ||
     !matchesModelHostProbeOrigin(state, opts.probeOrigin)
@@ -2548,17 +2561,27 @@ export async function statusModelHostForProbe(
   verifyParkedOmlx?: VerifyParkedOmlxProbe,
 ): Promise<StatusModelHostResult> {
   const status = statusModelHost(opts);
-  if (verifyParkedOmlx === undefined || status.state !== "Running") return status;
+  if (
+    verifyParkedOmlx === undefined ||
+    (status.state !== "Running" && status.identityUnknown !== true)
+  )
+    return status;
   const pinned = omlxParkedProbeIdentity(opts, status.pid);
   if (pinned === undefined) return status;
   try {
     const signal = AbortSignal.timeout(500);
     if (!(await verifyParkedOmlx(pinned, signal)) || signal.aborted) return status;
     const current = statusModelHost(opts);
-    return current.state === "Running" &&
-      isDeepStrictEqual(pinned, omlxParkedProbeIdentity(opts, current.pid))
-      ? { ...current, probeParked: true }
-      : current;
+    if (!isDeepStrictEqual(pinned, omlxParkedProbeIdentity(opts, current.pid))) return current;
+    if (current.state === "Running") return { ...current, probeParked: true };
+    if (current.identityUnknown !== true) return current;
+    return {
+      state: "Running",
+      pid: pinned.pid,
+      specHash: pinned.specHash,
+      probeParked: true,
+      ...omitUndefined({ runtime: current.runtime }),
+    };
   } catch {
     return status;
   }

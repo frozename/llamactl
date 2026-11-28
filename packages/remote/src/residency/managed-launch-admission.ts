@@ -14,6 +14,10 @@ import type {
   NativeRuntimeGeneration,
 } from "./admission-authority.js";
 import type { DirectLifecycleOutcome } from "./direct-lifecycle.js";
+import type {
+  NativeOmlxResidencyAction,
+  NativeOmlxResidencyResult,
+} from "./durable-omlx-parking.js";
 import type { InferenceHoldState } from "./inference-holds.js";
 
 export interface ManagedLaunchRequest {
@@ -84,6 +88,10 @@ export interface ManagedLaunchAdmission {
     kind: ManagedWorkloadKind,
   ) => ManagedProfileWorkloadObservation | undefined;
   verifyParkedOmlxProbe?: VerifyParkedOmlxProbe;
+  setNativeOmlxResidency?: (
+    workload: string,
+    action: NativeOmlxResidencyAction,
+  ) => Promise<NativeOmlxResidencyResult | undefined>;
   preflightProfile?: (
     plan: Pick<OkPlan, "victims" | "replacements" | "retained">,
   ) => string | undefined;

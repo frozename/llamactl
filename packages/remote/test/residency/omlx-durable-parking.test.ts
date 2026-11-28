@@ -1,21 +1,20 @@
-import type {
-  ManagedCapacityOptions,
-  ManagedCapacitySample,
-} from "@llamactl/core/resources/managed-capacity";
-
 import {
   createResidencyLeases,
   getResidencyLeaseRegistry,
   setResidencyLeaseRegistry,
 } from "@llamactl/core/residency/leases";
+import { projectManagedCapacity } from "@llamactl/core/resources/managed-capacity";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { join } from "node:path";
+
+import type { NativeWakeLimits } from "../../src/residency/admission-store.js";
 
 import { makeTempRuntime } from "../../../core/test/helpers.js";
 import { openAdmissionAuthority } from "../../src/residency/admission-authority.js";
 import { createDurableOmlxParking } from "../../src/residency/durable-omlx-parking.js";
 import { createAgentOmlxNativeClient } from "../../src/residency/engine-client.js";
+import { connectOmlxOwnerSocket } from "../../src/residency/omlx-owner-socket.js";
 
 const NAME = "omlx-model";
 const MODEL_PATH = "/fixtures/approved/omlx-model";
@@ -34,6 +33,9 @@ type Proof = {
   loseExclusiveOnStatus: boolean;
   loaded: boolean;
   hold: boolean;
+  loseCapacityAtSocket: boolean;
+  loseExclusivityAtSocket: boolean;
+  statusGate?: { entered: () => void; wait: Promise<void> };
 };
 type Post = {
   action: string;
@@ -51,6 +53,7 @@ type Fixture = {
   path: string;
   owner: { pid: number; birthId: string };
   alternateReads: () => number;
+  statusReads: () => number;
   [Symbol.asyncDispose](): Promise<void>;
 };
 
@@ -70,7 +73,11 @@ function modelStatusResponse(proof: Proof): Response {
   });
 }
 
-function setup({ alternateClient = false, requireCreditProof = false } = {}): Fixture {
+function setup({
+  alternateClient = false,
+  requireCreditProof = false,
+  blockSocket = false,
+} = {}): Fixture {
   const temp = makeTempRuntime();
   const path = join(temp.devStorage, "omlx-admission.db");
   const previous = getResidencyLeaseRegistry();
@@ -91,6 +98,8 @@ function setup({ alternateClient = false, requireCreditProof = false } = {}): Fi
     loseExclusiveOnStatus: false,
     loaded: true,
     hold: false,
+    loseCapacityAtSocket: false,
+    loseExclusivityAtSocket: false,
   };
   const authority = openAdmissionAuthority({
     storePath: path,
@@ -121,15 +130,23 @@ function setup({ alternateClient = false, requireCreditProof = false } = {}): Fi
     throw new Error("failed to establish resident fixture");
   }
   const posts: Post[] = [];
+  let statusReads = 0;
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch(request): Response {
+    fetch(request): Response | Promise<Response> {
       const { pathname } = new URL(request.url);
       if (pathname === "/health") {
         return new Response(null, { status: proof.ready ? 204 : 503 });
       }
-      if (pathname === "/v1/models/status") return modelStatusResponse(proof);
+      if (pathname === "/v1/models/status") {
+        statusReads++;
+        const gate = proof.statusGate;
+        gate?.entered();
+        return gate === undefined
+          ? modelStatusResponse(proof)
+          : gate.wait.then(() => modelStatusResponse(proof));
+      }
       if (pathname === "/api/status")
         return Response.json({ active_requests: 0, waiting_requests: 0 });
       if (request.method === "POST") {
@@ -193,6 +210,7 @@ function setup({ alternateClient = false, requireCreditProof = false } = {}): Fi
             activityObservable: true,
           }),
         };
+  const openSocket = connectOmlxOwnerSocket(binding.endpoint, process.pid, () => !blockSocket);
   let ingressChecks = 0;
   const parking: ReturnType<typeof createDurableOmlxParking> = createDurableOmlxParking({
     ...obsoleteOptions,
@@ -202,6 +220,16 @@ function setup({ alternateClient = false, requireCreditProof = false } = {}): Fi
     authority,
     runtime,
     binding,
+    async connect(signal) {
+      const socket = await openSocket(signal);
+      const phase = authority.snapshot().find(({ claimId }) => claimId === claim.claimId)
+        ?.native?.phase;
+      if (proof.loseCapacityAtSocket && (phase === "reserved" || phase === "dispatched")) {
+        proof.headroom = 12;
+      }
+      if (proof.loseExclusivityAtSocket && phase === "parking") proof.exclusive = false;
+      return socket;
+    },
     registry,
     readInferenceHold: () => (proof.hold ? "current" : "clear"),
     verifyExclusiveIngress: (): boolean => {
@@ -210,16 +238,21 @@ function setup({ alternateClient = false, requireCreditProof = false } = {}): Fi
       return proof.exclusive;
     },
     qualifiedResidualGiB: () => proof.residual,
-    readCapacity: (): ManagedCapacitySample => ({
-      source: "darwin-vm",
-      physicalBytes: 48 * GIB,
-      availableBytes: proof.headroom * GIB,
-      pressure: "normal",
-      swapUsedBytes: 0,
-      observedAtMs: 1000,
-      scope: { kind: "host-physical" },
-    }),
-    capacityPolicy: (): ManagedCapacityOptions => ({ nowMs: 1000, configuredBudgetGiB: 16 }),
+    readLimits: (): NativeWakeLimits | undefined => {
+      const limits = projectManagedCapacity(
+        {
+          source: "darwin-vm",
+          physicalBytes: 48 * GIB,
+          availableBytes: proof.headroom * GIB,
+          pressure: "normal",
+          swapUsedBytes: 0,
+          observedAtMs: 1000,
+          scope: { kind: "host-physical" },
+        },
+        { nowMs: 1000, configuredBudgetGiB: 16 },
+      );
+      return limits.ok ? limits : undefined;
+    },
   });
   return {
     authority,
@@ -231,6 +264,7 @@ function setup({ alternateClient = false, requireCreditProof = false } = {}): Fi
     path,
     owner,
     alternateReads: (): number => reads,
+    statusReads: (): number => statusReads,
     async [Symbol.asyncDispose](): Promise<void> {
       await alternate?.stop(true);
       await server.stop(true);
@@ -470,4 +504,72 @@ test("losing exclusivity during the reload status probe restores the full charge
   expect(f.registry.snapshot(NAME).phase).toBe("unloaded");
   expect(f.authority.snapshot()[0]).toMatchObject({ state: "uncertain", allocationGiB: 8 });
   expect(f.posts.map(({ action }) => action)).toEqual(["unload"]);
+});
+
+test("native parking does not send status or unload to an unverified socket", async () => {
+  await using f = setup({ blockSocket: true });
+  expect(f.statusReads()).toBe(0);
+  expect(await f.parking.unload()).toMatchObject({ reservation: "held" });
+  expect(f.posts).toEqual([]);
+  expect(f.statusReads()).toBe(0);
+  expect(f.registry.snapshot(NAME).phase).toBe("open");
+  expect(f.authority.snapshot()).toMatchObject([{ state: "resident", allocationGiB: 8 }]);
+});
+
+test("parked verification requires the live receipt and never changes the reservation", async () => {
+  await using f = setup();
+  expect(await f.parking.verifyParked()).toBe(false);
+  expect(f.statusReads()).toBe(0);
+  expect(await f.parking.unload()).toMatchObject({ kind: "parked", chargedGiB: 2 });
+  const parked = f.authority.snapshot();
+  expect(await f.parking.verifyParked()).toBe(true);
+  f.proof.loaded = true;
+  expect(await f.parking.verifyParked()).toBe(false);
+  expect(f.authority.snapshot()).toEqual(parked);
+  expect(f.posts.map(({ action }) => action)).toEqual(["unload"]);
+});
+
+test("resume rechecks available capacity on the verified socket before sending the load", async () => {
+  await using f = setup();
+  expect(await f.parking.unload()).toMatchObject({ kind: "parked" });
+  f.proof.loseCapacityAtSocket = true;
+  await f.parking.load();
+  expect(f.posts.map(({ action }) => action)).toEqual(["unload"]);
+  expect(f.authority.snapshot()).toMatchObject([{ state: "uncertain", allocationGiB: 8 }]);
+  expect(f.registry.snapshot(NAME).phase).toBe("unloaded");
+});
+
+test("park rechecks exclusive ownership on the verified socket before sending the unload", async () => {
+  await using f = setup();
+  f.proof.loseExclusivityAtSocket = true;
+  await f.parking.unload();
+  expect(f.posts).toEqual([]);
+  expect(f.authority.snapshot()).toMatchObject([{ state: "uncertain", allocationGiB: 8 }]);
+  expect(f.registry.snapshot(NAME).phase).toBe("unloaded");
+});
+
+test("aborting a parked probe cancels its verified status request before the engine replies", async () => {
+  await using f = setup();
+  expect(await f.parking.unload()).toMatchObject({ kind: "parked" });
+  const ledger = f.authority.snapshot();
+  const entered = Promise.withResolvers<undefined>();
+  const release = Promise.withResolvers<undefined>();
+  f.proof.statusGate = {
+    entered: (): void => {
+      entered.resolve(undefined);
+    },
+    wait: release.promise,
+  };
+  const abort = new AbortController();
+  const check = f.parking.verifyParked(abort.signal);
+  try {
+    await entered.promise;
+    abort.abort();
+    const cancelled = await Promise.race([check, Bun.sleep(600).then(() => "stalled")]);
+    expect(cancelled).toBe(false);
+    expect(f.authority.snapshot()).toEqual(ledger);
+  } finally {
+    release.resolve(undefined);
+    await check;
+  }
 });
