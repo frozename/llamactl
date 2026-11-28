@@ -1942,6 +1942,12 @@ export function buildServeOptions(
     // Named operator bearer tokens (#218), re-read on every request, so
     // 'agent token add' / 'revoke' apply without a restart.
     bearerTokens: agentConfigMod.bearerTokensReader(join(parsed.dir, "agent.yaml")),
+    // #218: when each bearer was last seen, persisted beside agent.yaml so
+    // the last-used gauge survives a restart and `agent token list` can
+    // show it. Labels only — never a token or a hash.
+    bearerLastUsed: agentConfigMod.bearerLastUsedRecorder(
+      agentConfigMod.bearerLastUsedPath(parsed.dir),
+    ),
     tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
     // Publish cluster peers' fleet snapshots so peer models route through this
     // proxy with prefix-cache. No-op when listPeers() is empty (single-node).

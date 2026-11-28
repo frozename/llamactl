@@ -27,6 +27,11 @@ Subcommands:
       from 'rotate-token --grace' and holds the previous primary token;
       expired entries no longer authenticate and can be removed with
       'token revoke'. Hashes and tokens are never listed.
+      A last column lastUsed=<iso> (--json: a lastUsedAt field) is added
+      when the running agent has recorded a use of that token at or after
+      the entry was created. It comes from bearer-last-used.json in the
+      agent dir, is written by the agent at most once per minute per
+      token, and survives restarts; no file, no column.
   revoke <name> [--dir=<path>]
       Drop the named token. The next request with it is refused.
   rename <old> <new> [--json] [--dir=<path>]
@@ -230,6 +235,29 @@ function reportAdd(
   if (flags.out === undefined) process.stdout.write(`${token}\n`);
 }
 
+/**
+ * The last use to show for an entry, or undefined when there is nothing to
+ * show (#218). A record older than the entry is not shown: it belongs to a
+ * revoked token that once held this name, and crediting a fresh token with
+ * its predecessor's activity would hide the fact that nobody has used it.
+ */
+function lastUsedFor(
+  entry: agentConfigMod.AgentBearerToken,
+  lastUsed: agentConfigMod.BearerLastUsed,
+): string | undefined {
+  const at = lastUsed[agentConfigMod.namedBearerAuditLabel(entry.name)];
+  if (at === undefined) return undefined;
+  return Date.parse(at) >= Date.parse(entry.createdAt) ? at : undefined;
+}
+
+/** The listed entry's expiry column: empty with none, expires= while valid, expired= after. */
+function expiryColumn(entry: agentConfigMod.AgentBearerToken, t: number): string {
+  if (entry.expiresAt === undefined) return "";
+  return Date.parse(entry.expiresAt) > t
+    ? `\texpires=${entry.expiresAt}`
+    : `\texpired=${entry.expiresAt}`;
+}
+
 function tokenList(args: string[]): number {
   const flags = parseTokenFlags(args);
   if ("error" in flags) return fail(flags.error);
@@ -239,14 +267,19 @@ function tokenList(args: string[]): number {
   if (state === 1) return 1;
 
   const t = Date.now();
+  const lastUsed = agentConfigMod.readBearerLastUsed(agentConfigMod.bearerLastUsedPath(flags.dir));
   if (flags.json) {
-    const listed = (state.entries ?? []).map((e) => ({
-      name: e.name,
-      createdAt: e.createdAt,
-      ...(e.expiresAt !== undefined
-        ? { expiresAt: e.expiresAt, expired: Date.parse(e.expiresAt) <= t }
-        : {}),
-    }));
+    const listed = (state.entries ?? []).map((e) => {
+      const at = lastUsedFor(e, lastUsed);
+      return {
+        name: e.name,
+        createdAt: e.createdAt,
+        ...(e.expiresAt !== undefined
+          ? { expiresAt: e.expiresAt, expired: Date.parse(e.expiresAt) <= t }
+          : {}),
+        ...(at !== undefined ? { lastUsedAt: at } : {}),
+      };
+    });
     process.stdout.write(`${JSON.stringify(listed)}\n`);
     return 0;
   }
@@ -255,13 +288,9 @@ function tokenList(args: string[]): number {
     return 0;
   }
   for (const e of state.entries) {
-    const expiry =
-      e.expiresAt === undefined
-        ? ""
-        : Date.parse(e.expiresAt) > t
-          ? `\texpires=${e.expiresAt}`
-          : `\texpired=${e.expiresAt}`;
-    process.stdout.write(`${e.name}\t${e.createdAt}${expiry}\n`);
+    const at = lastUsedFor(e, lastUsed);
+    const used = at === undefined ? "" : `\tlastUsed=${at}`;
+    process.stdout.write(`${e.name}\t${e.createdAt}${expiryColumn(e, t)}${used}\n`);
   }
   if (state.entries.some((e) => e.name === agentConfigMod.PRIMARY_BEARER_NAME)) {
     process.stderr.write(agentConfigMod.legacyDefaultBearerWarning(state.configPath));

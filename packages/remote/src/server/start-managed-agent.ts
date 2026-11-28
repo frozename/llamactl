@@ -117,12 +117,24 @@ function stageNativeOmlxOwner(
 function withNativeOmlxOperators(
   admission: ManagedLaunchAdmission,
   owner: ReturnType<typeof stageNativeOmlxOwner>,
+  resolved: ReturnType<typeof resolveEnv>,
 ): ManagedLaunchAdmission {
-  if (owner === undefined) return admission;
+  if (owner === undefined) {
+    return {
+      ...admission,
+      readOwnedOmlxStatus: (name): Promise<null | undefined> =>
+        Promise.resolve(
+          readModelHostState({ name }, resolved)?.requiresOwnerTransport === true
+            ? null
+            : undefined,
+        ),
+    };
+  }
   return {
     ...admission,
     setNativeOmlxResidency: owner.setNativeResidency.bind(owner),
     verifyParkedOmlxProbe: owner.verifyParked,
+    readOwnedOmlxStatus: owner.readOwnedStatus,
   };
 }
 
@@ -205,7 +217,7 @@ export async function startManagedAgentServer(
       ...cold,
       nodeName,
       residencyLeases: true,
-      managedLaunchAdmission: withNativeOmlxOperators(runtime.admission, nativeOwner),
+      managedLaunchAdmission: withNativeOmlxOperators(runtime.admission, nativeOwner, resolved),
       managedInferenceHolds: inferenceHolds,
       selectManagedEngineTransport: deps.selectEngineTransport ?? nativeOwner?.select,
       selectManagedEngineReadiness: nativeOwner?.readiness,

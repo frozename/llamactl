@@ -38,6 +38,23 @@ async function hasAcceptedPeer(
   }
 }
 
+async function waitForAcceptedPeer(
+  socket: Socket,
+  pid: number,
+  current: () => boolean,
+  signal?: AbortSignal | null,
+): Promise<boolean> {
+  // The TCP handshake can finish before the engine accepts the peer.
+  const deadline = AbortSignal.timeout(350);
+  const proofSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  const canProvePeer = (): boolean => !proofSignal.aborted && !socket.destroyed && current();
+  while (canProvePeer()) {
+    if (await hasAcceptedPeer(socket, pid, proofSignal)) return canProvePeer();
+    await Bun.sleep(10);
+  }
+  return false;
+}
+
 export function connectOmlxOwnerSocket(
   endpoint: Readonly<{ host: string; port: number }>,
   pid: number,
@@ -51,10 +68,11 @@ export function connectOmlxOwnerSocket(
     socket.on("error", () => undefined);
     try {
       await once(socket, "connect", signal ? { signal } : {});
-      if (!(await hasAcceptedPeer(socket, pid, signal)) || socket.destroyed || !current()) {
+      const proved = await waitForAcceptedPeer(socket, pid, current, signal);
+      signal?.throwIfAborted();
+      if (!proved || socket.destroyed || !current()) {
         throw new Error("oMLX connection has no verified engine peer");
       }
-      signal?.throwIfAborted();
       return socket;
     } catch (error) {
       socket.destroy();

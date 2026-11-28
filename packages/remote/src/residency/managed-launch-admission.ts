@@ -19,6 +19,7 @@ import type {
   NativeOmlxResidencyResult,
 } from "./durable-omlx-parking.js";
 import type { InferenceHoldState } from "./inference-holds.js";
+import type { ReadOwnedOmlxStatus } from "./omlx-capability.js";
 
 export interface ManagedLaunchRequest {
   kind: ManagedWorkloadKind;
@@ -88,6 +89,7 @@ export interface ManagedLaunchAdmission {
     kind: ManagedWorkloadKind,
   ) => ManagedProfileWorkloadObservation | undefined;
   verifyParkedOmlxProbe?: VerifyParkedOmlxProbe;
+  readOwnedOmlxStatus?: ReadOwnedOmlxStatus;
   setNativeOmlxResidency?: (
     workload: string,
     action: NativeOmlxResidencyAction,

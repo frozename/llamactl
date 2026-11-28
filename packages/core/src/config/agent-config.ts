@@ -605,6 +605,130 @@ export function bearerTokensReader(
   };
 }
 
+/**
+ * The file beside agent.yaml holding when each bearer audit label was last
+ * seen (#218). It carries labels and times only — never a token or a hash —
+ * so it is 0600 for the same reason agent.yaml is: it tells an attacker
+ * which tokens are live.
+ */
+export const BEARER_LAST_USED_FILE = "bearer-last-used.json";
+
+export function bearerLastUsedPath(agentDir: string): string {
+  return join(agentDir, BEARER_LAST_USED_FILE);
+}
+
+/** Audit label -> ISO-8601 time of the last request that bearer admitted. */
+export type BearerLastUsed = Record<string, string>;
+
+/** Whether `label` is a name the last-used store may key on. */
+function isBearerLastUsedLabel(label: string): boolean {
+  return (
+    label === PRIMARY_BEARER_NAME ||
+    label === LEGACY_DEFAULT_BEARER_LABEL ||
+    BEARER_TOKEN_NAME.test(label)
+  );
+}
+
+/**
+ * The persisted last-used map, or {} for a file that is missing, unreadable,
+ * not JSON or not an object: last use is a convenience, so a damaged store
+ * is ignored rather than failing `agent token list` or the agent's boot.
+ * Labels outside {@link namedBearerAuditLabel}'s range and values that are
+ * not a parseable time are dropped, so a hand-edited file cannot inject a
+ * metric label.
+ */
+export function readBearerLastUsed(path: string): BearerLastUsed {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return {};
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+  const out: BearerLastUsed = {};
+  for (const [label, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!isBearerLastUsedLabel(label)) continue;
+    if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) continue;
+    out[label] = value;
+  }
+  return out;
+}
+
+export interface BearerLastUsedRecorder {
+  record(label: string): void;
+  snapshot(): BearerLastUsed;
+}
+
+/**
+ * The last-used store the running agent writes (#218): every admitted
+ * bearer label is kept in memory and persisted at 0600 beside agent.yaml,
+ * so a restart does not forget when a token was last seen. A label is
+ * written on its first use and then at most once per `flushIntervalMs`, so
+ * a busy agent rewrites the file on a minute cadence per token, not per
+ * request.
+ *
+ * Persistence is best-effort: a failed write is one stderr line naming the
+ * path (never a token, a hash or the map) and is retried no sooner than
+ * `flushIntervalMs` later, so a read-only or unwritable dir cannot flood
+ * the log or throw into a request. It reuses {@link exclusiveWriteAttempt}
+ * so a tmp an attacker pre-planted as a symlink is never written through.
+ */
+export function bearerLastUsedRecorder(
+  path: string,
+  opts: { now?: () => number; flushIntervalMs?: number } = {},
+): BearerLastUsedRecorder {
+  const now = opts.now ?? Date.now;
+  const flushIntervalMs = opts.flushIntervalMs ?? 60_000;
+  const memory: BearerLastUsed = readBearerLastUsed(path);
+  let persisted: BearerLastUsed = { ...memory };
+  let lastFailure = Number.NEGATIVE_INFINITY;
+
+  const flush = (): void => {
+    const dir = dirname(path);
+    const prefix = `.${path.slice(dir.length + 1)}.tmp-${String(process.pid)}-`;
+    const contents = `${JSON.stringify(memory)}\n`;
+    for (let attempt = 0; attempt < TMP_WRITE_ATTEMPTS; attempt++) {
+      const tmp = join(dir, `${prefix}${Math.random().toString(36).slice(2)}`);
+      if (exclusiveWriteAttempt(tmp, contents, path) === null) {
+        persisted = { ...memory };
+        return;
+      }
+    }
+    throw new Error(
+      `could not create a temp file next to ${path}: ${String(TMP_WRITE_ATTEMPTS)} attempts all collided with an existing entry`,
+    );
+  };
+
+  return {
+    record(label: string): void {
+      if (!isBearerLastUsedLabel(label)) return;
+      const t = now();
+      memory[label] = new Date(t).toISOString();
+      const written = persisted[label];
+      const stale = written === undefined || t - Date.parse(written) >= flushIntervalMs;
+      if (!stale || t - lastFailure < flushIntervalMs) return;
+      try {
+        flush();
+      } catch (err) {
+        lastFailure = t;
+        const reason =
+          (err as NodeJS.ErrnoException).code ??
+          ((err as Error).message === "" ? "unknown error" : (err as Error).message);
+        process.stderr.write(`[agent] could not persist bearer last use to ${path}: ${reason}\n`);
+      }
+    },
+    snapshot(): BearerLastUsed {
+      return { ...memory };
+    },
+  };
+}
+
 export interface BootstrapBlob {
   url: string;
   fingerprint: string;

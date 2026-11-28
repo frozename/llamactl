@@ -225,11 +225,11 @@ describe("#522 residency pending #276 refresh", () => {
     expect(
       flat(enclosingBody(matrixRunner, "async function runModelCells(")),
       "model cells",
-    ).toContain("recordBootError(model, opts.workloads, runId, opts.db)");
+    ).toContain("recordBootError(model, opts.workloads, runId, opts.db, reason)");
     expect(
       flat(enclosingBody(matrixRunner, "async function runWorkloadCell(")),
       "judge workload cell",
-    ).toContain("recordBootError(model, [workload], runId, opts.db)");
+    ).toContain("recordBootError(model, [workload], runId, opts.db, reason)");
     expect(flat(enclosingBody(matrixCli, "async function main(")), "matrix CLI wiring").toContain(
       "launchRefusal: matrixLaunchRefusal,",
     );

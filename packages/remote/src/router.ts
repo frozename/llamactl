@@ -3462,6 +3462,7 @@ export const router = t.router({
           servingNode,
           hosts: modelHostStoreMod.listModelHosts(),
           ...(owner?.ownsNode === undefined ? {} : { ownsNode: owner.ownsNode }),
+          readOwned: owner?.readOwnedOmlxStatus,
         }),
         sessionRegistry: currentSessionRefcounts(),
       });

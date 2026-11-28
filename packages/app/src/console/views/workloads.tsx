@@ -91,6 +91,7 @@ function ConsoleWorkloadRowCard({
   const native = residency?.omlxNative?.workloads.find(
     (workload) => workload.workload === row.name,
   );
+  const engineState = native?.servingState ?? native?.modelState;
   return (
     <div data-testid={`console-workload-row-${row.name}`} style={{ display: "grid", gap: 4 }}>
       <div className="console-list-row">
@@ -125,7 +126,7 @@ function ConsoleWorkloadRowCard({
         {`Residency: ${workloadResidencyOf(residency, row.name)}`}
         {native?.mode === "native" ? " · Native mode" : null}
         {native?.mode === "process-fallback" ? " · Whole-process mode" : null}
-        {native?.modelState === undefined ? null : ` · Engine inventory ${native.modelState}`}
+        {engineState === undefined ? null : ` · Engine inventory ${engineState}`}
       </div>
       {open ? <DescribeDrawer data={describe.data} /> : null}
     </div>

@@ -5,7 +5,8 @@ import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { NativeRuntimeGeneration } from "../residency/admission-authority.js";
-import type { OmlxNativeBinding } from "../residency/engine-client.js";
+import type { NativeStatus, OmlxNativeBinding } from "../residency/engine-client.js";
+import type { ReadOwnedOmlxStatus } from "../residency/omlx-capability.js";
 import type { ConnectOmlxOwnerSocket } from "../residency/omlx-owner-socket.js";
 import type { SelectOwnerTransport } from "../residency/owner-admission.js";
 import type { VerifyParkedOmlxProbe } from "./modelhost.js";
@@ -16,7 +17,7 @@ import {
   type NativeOmlxResidencyAction,
   type NativeOmlxResidencyResult,
 } from "../residency/durable-omlx-parking.js";
-import { buildBaseUrl } from "../residency/engine-client.js";
+import { buildBaseUrl, createOmlxNativeClient } from "../residency/engine-client.js";
 import { createOmlxOwnerFetch } from "../residency/omlx-owner-http.js";
 
 type OwnerParkingDeps = Pick<
@@ -44,6 +45,7 @@ interface RegisteredOmlxHost {
   runtime: NativeRuntimeGeneration;
   specHash: string;
   parking?: ReturnType<typeof createDurableOmlxParking>;
+  readNativeStatus(signal: AbortSignal): Promise<NativeStatus>;
 }
 
 function registerParking(
@@ -89,6 +91,15 @@ function newRegisteredOmlxHost(
     throw new Error("oMLX engine generation changed");
   };
   const direct = createOmlxOwnerFetch(endpoint, { connect: guardedConnect });
+  const inspection = createOmlxNativeClient({
+    endpoint,
+    binding,
+    hostedRel: binding.modelId,
+    activityObservable: true,
+    apiKey,
+    readiness,
+    fetch: direct,
+  });
   const read = Object.assign(
     (input: Request | URL | string, init?: RequestInit): Promise<Response> => {
       const url = new URL(input instanceof Request ? input.url : input);
@@ -120,6 +131,7 @@ function newRegisteredOmlxHost(
     runtime,
     specHash,
     ...(parking === undefined ? {} : { parking }),
+    readNativeStatus: (signal) => inspection.status(signal),
   };
 }
 
@@ -146,6 +158,7 @@ export function createNativeOmlxOwner(
     action: NativeOmlxResidencyAction,
   ): Promise<NativeOmlxResidencyResult | undefined>;
   verifyParked: VerifyParkedOmlxProbe;
+  readOwnedStatus: ReadOwnedOmlxStatus;
   select: SelectOwnerTransport;
   readiness: SelectLocalEngineReadiness;
 } {
@@ -199,6 +212,17 @@ export function createNativeOmlxOwner(
       )
         return false;
       return await parking.verifyParked(signal);
+    },
+    async readOwnedStatus(workload, endpoint, signal): Promise<NativeStatus | null | undefined> {
+      if (!isProtected(workload)) return undefined;
+      const binding = registered.get(workload);
+      if (binding?.origin !== new URL(buildBaseUrl(endpoint.host, endpoint.port)).origin)
+        return null;
+      const current = (): boolean =>
+        !signal.aborted && registered.get(workload) === binding && binding.current();
+      if (!current()) return null;
+      const status = await binding.readNativeStatus(signal);
+      return current() ? status : null;
     },
     readiness(
       route: { workload: string; host: string; port: number },
