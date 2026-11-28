@@ -1458,16 +1458,18 @@ type ScopedSpawnAttempt =
   | { kind: "aborted"; child: ChildProcess; pid: number; scope: ModelHostScopeLaunch }
   | { kind: "none" };
 
+class ManagedHostSpawnRefusedError extends Error {}
+
 function enforceManagedHostSpawn(
   opts: StartModelHostOptions,
   resolved: ReturnType<typeof resolveEnv>,
 ): void {
   if (opts.checkSpawn === undefined) return;
   if (managedRuntimeRefusesMutation(resolved.LOCAL_AI_RUNTIME_DIR)) {
-    throw new Error("ManagedOwnerRequired");
+    throw new ManagedHostSpawnRefusedError("ManagedOwnerRequired");
   }
   const refusal = opts.checkSpawn();
-  if (refusal !== undefined) throw new Error(refusal);
+  if (refusal !== undefined) throw new ManagedHostSpawnRefusedError(refusal);
 }
 
 async function attemptScopedModelHostSpawn(
@@ -1940,14 +1942,17 @@ async function prepareModelHostCommand(
 function failedModelHostStart(
   error: unknown,
   spawnedPid: number | undefined,
-  cacheBeforeDispatch: boolean,
+  refusedBeforeDispatch: boolean,
 ): StartModelHostResult {
   const message = error instanceof Error ? error.message : "modelhost start failed";
   return {
     ok: false,
     pid: null,
     error: message,
-    ...omitUndefined({ spawnedPid, preDispatchRefusal: cacheBeforeDispatch ? message : undefined }),
+    ...omitUndefined({
+      spawnedPid,
+      preDispatchRefusal: refusedBeforeDispatch ? message : undefined,
+    }),
   };
 }
 
@@ -2106,7 +2111,8 @@ async function launchModelHostWithBootLog(
     const result = failedModelHostStart(
       error,
       spawnedPid,
-      spec.omlxCacheEpoch !== undefined && !dispatch.attempted,
+      !dispatch.attempted &&
+        (spec.omlxCacheEpoch !== undefined || error instanceof ManagedHostSpawnRefusedError),
     );
     opts.onEvent?.({ type: "done", result });
     return result;
@@ -2198,6 +2204,7 @@ function residencyGroupConflict(
 export interface PinnedModelHostStartup {
   manifest: ModelHostManifest;
   env: NodeJS.ProcessEnv;
+  configEnv: Readonly<NodeJS.ProcessEnv>;
   effectiveSpecDigest: string;
   effectiveLaunch: Readonly<Record<string, unknown>>;
 }
@@ -2242,6 +2249,10 @@ export function pinModelHostStartup(input: ModelHostManifest): PinnedModelHostSt
   return {
     manifest,
     env,
+    configEnv: {
+      HOME: effective.childEnv["HOME"],
+      XDG_CONFIG_HOME: effective.childEnv["XDG_CONFIG_HOME"],
+    },
     effectiveSpecDigest: createHash("sha256").update(canonical).digest("hex"),
     effectiveLaunch,
   };

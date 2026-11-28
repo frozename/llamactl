@@ -269,6 +269,10 @@ function settlePreDispatchRefusal<T extends LaunchResult>(
   return refuse(outcome.result.preDispatchRefusal);
 }
 
+function settleUnstartedLaunch(outcome: LaunchRefusal, abandoned: boolean): LaunchRefusal {
+  return abandoned ? outcome : refuse("ManagedReadyUnverified");
+}
+
 function verifyReadyGeneration(
   opts: ManagedLaunchOptions,
   request: ManagedLaunchRequest,
@@ -326,7 +330,7 @@ async function runClaimedLaunch<T extends LaunchResult>(
     if (!outcome.ran) {
       abandoned =
         committedPid === undefined && opts.authority.abandonUnstarted(claimId, fenceToken);
-      return outcome;
+      return settleUnstartedLaunch(outcome, abandoned);
     }
     const { ok, pid, spawnedPid } = outcome.result;
     if (ok) {

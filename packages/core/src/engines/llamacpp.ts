@@ -14,13 +14,18 @@ const DRAFT_MODEL_PATH_FLAGS: ReadonlySet<string> = new Set([
   "--dspark",
 ]);
 
+const IDLE_SLEEP_FLAG = "--sleep-idle-seconds";
+
 export function hasUnmanagedLlamacppIdleSleep(args: readonly string[]): boolean {
-  const flag = "--sleep-idle-seconds";
   return args.some((argument, index) => {
     const token = argument.replaceAll("_", "-");
-    if (token === flag) return args[index + 1] !== "-1";
-    return token.startsWith(flag + "=") && token !== flag + "=-1";
+    if (token === IDLE_SLEEP_FLAG) return args[index + 1] !== "-1";
+    return token.startsWith(IDLE_SLEEP_FLAG + "=") && token !== IDLE_SLEEP_FLAG + "=-1";
   });
+}
+
+export function hasLeadingLlamacppIdleSleepOverride(args: readonly string[]): boolean {
+  return args[0]?.replaceAll("_", "-") === IDLE_SLEEP_FLAG && args[1] === "-1";
 }
 
 export function hasDraftModelPathArg(args: readonly string[]): boolean {
