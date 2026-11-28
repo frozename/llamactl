@@ -313,6 +313,8 @@ describe("runKvWarmBench argument normalisation", () => {
       tokenizeUrl,
       ...Array.from({ length: 20 }, () => chatUrl),
     ]);
+    // Literal form, so changing the exported default breaks here too.
+    expect(run.calls[0]?.url).toBe("http://127.0.0.1:8089/v1/tokenize");
 
     const bodies = chatBodies(run.calls);
     for (const body of bodies) {
@@ -325,6 +327,7 @@ describe("runKvWarmBench argument normalisation", () => {
       DEFAULT_FRONTIERS.flatMap((frontier) => [frontier, frontier, frontier, frontier]),
     );
     expect(result.rows.map((row) => row.promptSize)).toEqual(DEFAULT_FRONTIERS);
+    expect(result.markdown).toContain("- Proxy base URL: http://127.0.0.1:8089");
     expect(result.markdown).toContain("- Frontiers: 2048, 4096, 8192, 16384, 32768");
     expect(result.markdown).toContain("- Warm runs: 3");
     expect(result.markdown).toContain("- Model: granite-test");
