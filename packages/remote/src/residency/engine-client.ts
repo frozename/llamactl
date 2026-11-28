@@ -253,7 +253,7 @@ type OmlxNativeUnloadCommit = {
 type BeforeNativeAction = (modelId: string) => boolean;
 
 export type OmlxNativeClient = {
-  status(): Promise<NativeStatus>;
+  status(signal?: AbortSignal): Promise<NativeStatus>;
   load(): Promise<NativeLoadResult>;
   loadWithCommit?(commit: OmlxNativeLoadCommit): Promise<NativeLoadResult>;
   unload(): Promise<NativeUnloadResult>;
@@ -342,6 +342,19 @@ async function send(
   } catch (err) {
     return { ok: false, error: classifyFetchError(signal, err) };
   }
+}
+
+function withStatusSignal(ctx: ClientCtx, signal: AbortSignal | undefined): ClientCtx {
+  if (signal === undefined) return ctx;
+  const base = Object.assign(
+    (input: URL | Request | string, init?: RequestInit): Promise<Response> =>
+      ctx.base(input, {
+        ...init,
+        signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+      }),
+    { preconnect: ctx.base.preconnect },
+  );
+  return { ...ctx, base };
 }
 
 // checkServingReadiness builds its own absolute URL and passes only a signal,
@@ -1116,8 +1129,8 @@ export function createOmlxNativeClient(opts: OmlxNativeClientOptions): OmlxNativ
   };
 
   return {
-    async status(): Promise<NativeStatus> {
-      return await statusInner(ctx);
+    async status(signal?: AbortSignal): Promise<NativeStatus> {
+      return await statusInner(withStatusSignal(ctx, signal));
     },
     async load(): Promise<NativeLoadResult> {
       return await singleFlightRun(

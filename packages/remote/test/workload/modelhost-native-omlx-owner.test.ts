@@ -1,6 +1,11 @@
 import { inferenceContracts, inferenceRpc } from "@llamactl/core";
-import { readModelHostStarting, readModelHostState } from "@llamactl/core/engines/state";
+import {
+  readModelHostStarting,
+  readModelHostState,
+  writeModelHostState,
+} from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
+import { getResidencyLeaseRegistry } from "@llamactl/core/residency/leases";
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -9,9 +14,10 @@ import type { RunningAgent } from "../../src/server/serve.js";
 
 import { envForTemp, makeTempRuntime } from "../../../core/test/helpers.js";
 import { currentWorkerRpcHost } from "../../src/inference/procedures.js";
+import { enterManagedOperatorAction } from "../../src/residency/managed-operator-control.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../../src/safe-fs.js";
 import { hashToken } from "../../src/server/auth.js";
-import { startModelHost } from "../../src/server/modelhost.js";
+import { startModelHost, stopModelHost } from "../../src/server/modelhost.js";
 import { startManagedAgentServer } from "../../src/server/start-managed-agent.js";
 import { ModelHostManifestSchema } from "../../src/workload/modelhost-schema.js";
 import { deleteModelHost, saveModelHost } from "../../src/workload/modelhost-store.js";
@@ -39,7 +45,9 @@ function makeEngine(root: string, changeArtifact: boolean): string {
 import argparse
 import json
 import os
+import signal
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
@@ -91,6 +99,10 @@ class Handler(BaseHTTPRequestHandler):
             self.server.loaded = True
             Path(self.server.base, "load-witness").write_text(str(os.getpid()))
             self.send_json(200, {"status": "ok", "model_id": "fixture-model"})
+        elif self.path == "/v1/models/fixture-model/unload":
+            self.server.loaded = False
+            Path(self.server.base, "unload-witness").write_text(str(os.getpid()))
+            self.send_json(200, {"status": "ok", "model_id": "fixture-model"})
         elif self.path == "/v1/chat/completions" and self.server.loaded:
             self.rfile.read(int(self.headers.get("Content-Length", 0)))
             chunk = {"id":"fixture", "model":"fixture-model", "choices":[{"index":0,"delta":{"content":"private-worker-ok"},"finish_reason":"stop"}]}
@@ -118,6 +130,16 @@ def main():
     parser.add_argument("--no-cache", action="store_true")
     parser.add_argument("--paged-ssd-cache-dir")
     args = parser.parse_args()
+    def hold_teardown(_number, _frame):
+        base = Path(args.base_path)
+        if (base / "hold-stop").exists():
+            (base / "stop-received").touch()
+            until = time.monotonic() + 5
+            while not (base / "release-stop").exists() and time.monotonic() < until:
+                time.sleep(0.01)
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, hold_teardown)
     with LoopbackServer((args.host, args.port), Handler) as server:
         server.key = os.environ["OMLX_API_KEY"]
         server.loaded = False
@@ -227,34 +249,180 @@ function stopFixtureEngine(bootWitness: string | undefined): void {
   }
 }
 
+async function verifyNativeParkCycle(
+  agent: RunningAgent,
+  headers: Record<string, string>,
+  base: string,
+  pid: number,
+): Promise<void> {
+  const requestTransition = (action: "park" | "resume"): Promise<Response> =>
+    fetch(`${agent.url}/trpc/modelHostNativeResidency`, {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ workload, action }),
+      signal: AbortSignal.timeout(6000),
+    });
+  const transition = async (action: "park" | "resume"): Promise<unknown> => {
+    const response = await requestTransition(action);
+    const payload = (await response.json()) as { result?: { data: unknown } };
+    expect({ status: response.status, detail: response.ok ? undefined : payload }).toEqual({
+      status: 200,
+      detail: undefined,
+    });
+    return payload.result?.data;
+  };
+
+  const witness = join(base, "unload-witness");
+  const leaveProfile = enterManagedOperatorAction("local", "profile");
+  if (leaveProfile === undefined) throw new Error("fixture could not enter its profile operation");
+  try {
+    const conflict = await requestTransition("park");
+    expect(conflict.status).toBe(409);
+    expect(existsSync(witness)).toBe(false);
+  } finally {
+    leaveProfile();
+  }
+  const leased = getResidencyLeaseRegistry()?.acquire(workload);
+  if (leased?.ok !== true) throw new Error("native fixture could not acquire its active lease");
+  try {
+    expect(await transition("park")).toMatchObject({ kind: "refused", reservation: "held" });
+    expect(existsSync(witness)).toBe(false);
+  } finally {
+    leased.lease.release();
+  }
+  expect(await transition("park")).toMatchObject({ kind: "parked", chargedGiB: 8 });
+  expect(readFileSync(witness, "utf8")).toBe(String(pid));
+  expect(() => process.kill(pid, 0)).not.toThrow();
+  const unset = await fetch(`${agent.url}/v1/models`, { headers });
+  expect(await unset.json()).toMatchObject({ data: [] });
+  const current = readModelHostState({ name: workload });
+  expect(current?.pid).toBe(pid);
+  if (current === null) throw new Error("parked ModelHost lost its runtime sidecar");
+  const status = new URL(`${agent.url}/trpc/modelHostStatus`);
+  status.searchParams.set(
+    "input",
+    JSON.stringify({ workload, probeOrigin: `http://127.0.0.1:${String(current.port)}` }),
+  );
+  const parked = await fetch(status, { headers, signal: AbortSignal.timeout(4000) });
+  expect(await parked.json()).toMatchObject({ result: { data: { pid, probeParked: true } } });
+  expect(await transition("park")).toMatchObject({ kind: "parked", chargedGiB: 8 });
+  expect(await transition("resume")).toMatchObject({ kind: "loaded" });
+  expect(readFileSync(join(base, "load-witness"), "utf8")).toBe(String(pid));
+  expect(await transition("resume")).toMatchObject({ kind: "already-loaded" });
+  const ready = await fetch(`${agent.url}/v1/models`, { headers });
+  expect(await ready.json()).toMatchObject({ data: [expect.objectContaining({ id: model })] });
+  expect(await transition("park")).toMatchObject({ kind: "parked", chargedGiB: 8 });
+}
+
+async function verifyNativeProcessRecovery(
+  agent: RunningAgent,
+  headers: Record<string, string>,
+  pid: number,
+  blockedStopBase?: string,
+): Promise<void> {
+  if (blockedStopBase !== undefined) writeFileSync(join(blockedStopBase, "hold-stop"), "");
+  const stopped = fetch(`${agent.url}/trpc/managedWorkloadSetEnabled`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ workload, enabled: false }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (blockedStopBase !== undefined) {
+    try {
+      const signalReceived = join(blockedStopBase, "stop-received");
+      for (let i = 0; i < 200 && !existsSync(signalReceived); i++) await Bun.sleep(10);
+      expect(existsSync(signalReceived)).toBe(true);
+      const resume = await fetch(`${agent.url}/trpc/modelHostNativeResidency`, {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({ workload, action: "resume" }),
+        signal: AbortSignal.timeout(4000),
+      });
+      expect(resume.status).toBe(409);
+    } finally {
+      writeFileSync(join(blockedStopBase, "release-stop"), "");
+      await stopped;
+    }
+  }
+  const outcome = await stopped;
+  const result: unknown = await outcome.json();
+  expect({ status: outcome.status, result }).toMatchObject({
+    status: 200,
+    result: { result: { data: { action: "stopped", status: { phase: "Stopped" } } } },
+  });
+  expect(readModelHostState({ name: workload })).toBeNull();
+  expect(() => process.kill(pid, 0)).toThrow();
+  const status = new URL(`${agent.url}/trpc/residencyStatus`);
+  status.searchParams.set("input", JSON.stringify({ node: "local" }));
+  const readout = await fetch(status, { headers, signal: AbortSignal.timeout(6000) });
+  expect(await readout.json()).toMatchObject({ result: { data: { managed: { claims: [] } } } });
+}
+
+async function verifyNativeMaintenance(
+  agent: RunningAgent,
+  headers: Record<string, string>,
+  base: string,
+  pid: number,
+  stopRace: boolean,
+  restart: (current: RunningAgent) => Promise<RunningAgent>,
+): Promise<void> {
+  await verifyNativeParkCycle(agent, headers, base, pid);
+  const owner = stopRace ? agent : await restart(agent);
+  await verifyNativeProcessRecovery(owner, headers, pid, stopRace ? base : undefined);
+}
+
 test.each([
   {
     name: "publishes only after authenticated load and rejects a replacement listener",
     changeArtifact: false,
     restart: false,
+    parkCycle: false,
+    stopRace: false,
     lowHeadroomAfterLoad: false,
   },
   {
     name: "refuses a private default target after restart without the desired manifest",
     changeArtifact: false,
     restart: true,
+    parkCycle: false,
+    stopRace: false,
     lowHeadroomAfterLoad: false,
   },
   {
     name: "refuses to load an artifact changed after the first owner probes",
     changeArtifact: true,
     restart: false,
+    parkCycle: false,
+    stopRace: false,
     lowHeadroomAfterLoad: false,
   },
   {
     name: "commits a verified load when available capacity falls after dispatch",
     changeArtifact: false,
     restart: false,
+    parkCycle: false,
+    stopRace: false,
     lowHeadroomAfterLoad: true,
+  },
+  {
+    name: "parks and resumes the exact process through the managed operator surface",
+    changeArtifact: false,
+    restart: false,
+    parkCycle: true,
+    stopRace: false,
+    lowHeadroomAfterLoad: false,
+  },
+  {
+    name: "fences resume while the exact parked process is being stopped",
+    changeArtifact: false,
+    restart: false,
+    parkCycle: true,
+    stopRace: true,
+    lowHeadroomAfterLoad: false,
   },
 ])(
   "managed native ModelHost $name",
-  async ({ changeArtifact, restart, lowHeadroomAfterLoad }) => {
+  async ({ changeArtifact, restart, parkCycle, stopRace, lowHeadroomAfterLoad }) => {
     const temp = makeTempRuntime();
     const desiredDir = join(temp.devStorage, "desired");
     const managedBase = join(temp.runtimeDir, "workloads", workload, ".omlx", "managed-cache");
@@ -394,6 +562,21 @@ test.each([
         data: [expect.objectContaining({ id: model })],
       });
 
+      if (parkCycle) {
+        await verifyNativeMaintenance(
+          running,
+          headers,
+          managedBase,
+          state.pid,
+          stopRace,
+          async (agent) => {
+            await agent.stop();
+            running = await startAgent();
+            return running;
+          },
+        );
+        return;
+      }
       await verifyNativeWorker();
       expect(readFileSync(join(managedBase, "model_settings.json"), "utf8")).toContain(
         '"mtp_enabled": true',
@@ -517,6 +700,43 @@ test("native oMLX cannot change desired state outside an admitted owner launch",
       persisted: false,
     });
   } finally {
+    temp.cleanup();
+  }
+});
+
+test("a persisted private ModelHost cannot signal an unverified replacement PID", async () => {
+  const temp = makeTempRuntime();
+  const child = Bun.spawn(["/bin/sleep", "20"], { stdout: "ignore", stderr: "ignore" });
+  const env = envForTemp(temp);
+  const resolved = resolveEnv({ ...env, LOCAL_AI_RUNTIME_DIR: temp.runtimeDir });
+  const key = { name: workload };
+  try {
+    writeModelHostState(
+      {
+        kind: "ModelHost",
+        engine: "omlx",
+        host: "127.0.0.1",
+        port: 18733,
+        pid: child.pid,
+        startedAt: new Date().toISOString(),
+        modelAliases: [model],
+        requiresOwnerTransport: true,
+      },
+      key,
+      resolved,
+    );
+    const outcome = await stopModelHost({
+      key,
+      env,
+      runtimeDir: temp.runtimeDir,
+      identity: { verifyGeneration: () => "unknown" },
+    });
+    expect(outcome).toMatchObject({ ok: false, error: "ManagedStopGenerationUnverified" });
+    expect(() => process.kill(child.pid, 0)).not.toThrow();
+    expect(readModelHostState(key, resolved)?.pid).toBe(child.pid);
+  } finally {
+    child.kill();
+    await child.exited;
     temp.cleanup();
   }
 });

@@ -2385,6 +2385,20 @@ type AgentWorkloadApplyResult =
       node: string;
     };
 
+async function withManagedManualMutation<T>(
+  node: string | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (node === undefined) return await run();
+  const leave = enterManagedOperatorAction(node, "manual");
+  if (leave === undefined) throw new TRPCError({ code: "CONFLICT", message: "NodeBusy" });
+  try {
+    return await run();
+  } finally {
+    leave();
+  }
+}
+
 async function applyAgentWorkload(
   managed: ManagedLaunchAdmission | undefined,
   signal: AbortSignal | undefined,
@@ -2416,65 +2430,69 @@ async function applyAgentWorkload(
       _input: unknown,
       apply: (ownsNode: boolean, budget?: ManagedApplyBudget) => Promise<T>,
     ): Promise<T> => await apply(false));
-  return await workloadStoreMod.withWorkloadsMutex(workloadsDir, async () => {
-    const manifest = readManifest(workloadsDir);
-    const cfg = kubecfg.loadConfig();
-    return await scope(manifest, async (ownsNode, budget) => {
-      if (!ownsNode) refuseLegacyManagedMutation("ManagedOwnerRequired");
-      if (ownsNode) assertManagedApplyOwnsDirectory(workloadsDir);
-      const handoffResult = ownsNode ? null : handoffLocalModelHost(manifest, workloadsDir);
-      if (handoffResult) return handoffResult;
-      const result = await workloadApplyMod.applyManifest({
-        manifest,
-        getClient: clientForApply(cfg, managed, ownsNode, signal),
-        getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
-        ...(budget === undefined ? {} : { managedBudget: budget }),
-        getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
-      });
-      if (!result.ok) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
-      }
-      if (result.kind === "ModelRun") {
-        const persisted: ModelRun = {
-          ...result.manifest,
-          status: result.result.statusSection,
-        };
-        const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
+  const interlockNode =
+    managed?.setNativeOmlxResidency === undefined ? undefined : managed.ownerNodeId;
+  return await withManagedManualMutation(interlockNode, () =>
+    workloadStoreMod.withWorkloadsMutex(workloadsDir, async () => {
+      const manifest = readManifest(workloadsDir);
+      const cfg = kubecfg.loadConfig();
+      return await scope(manifest, async (ownsNode, budget) => {
+        if (!ownsNode) refuseLegacyManagedMutation("ManagedOwnerRequired");
+        if (ownsNode) assertManagedApplyOwnsDirectory(workloadsDir);
+        const handoffResult = ownsNode ? null : handoffLocalModelHost(manifest, workloadsDir);
+        if (handoffResult) return handoffResult;
+        const result = await workloadApplyMod.applyManifest({
+          manifest,
+          getClient: clientForApply(cfg, managed, ownsNode, signal),
+          getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
+          ...(budget === undefined ? {} : { managedBudget: budget }),
+          getNodeResidency: (nodeName) => nodeRunResidency(nodeName, workloadsDir),
+        });
+        if (!result.ok) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
+        }
+        if (result.kind === "ModelRun") {
+          const persisted: ModelRun = {
+            ...result.manifest,
+            status: result.result.statusSection,
+          };
+          const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
+          return {
+            action: result.result.action,
+            path: savedPath,
+            status: result.result.statusSection,
+            name: result.manifest.metadata.name,
+            node: result.manifest.spec.node,
+          };
+        }
+        const disabled = ownsNode && !result.manifest.spec.enabled;
+        const action = disabled ? "stopped" : "started";
+        const savedPath = disabled
+          ? modelHostStoreMod.saveModelHost(result.manifest, workloadsDir)
+          : null;
         return {
-          action: result.result.action,
+          action,
           path: savedPath,
-          status: result.result.statusSection,
+          status: {
+            phase: disabled ? "Stopped" : "Running",
+            serverPid: result.pid,
+            endpoint: result.endpoint,
+            lastTransitionTime: new Date().toISOString(),
+            conditions: [
+              {
+                type: "Applied",
+                status: "True",
+                reason: action,
+                lastTransitionTime: new Date().toISOString(),
+              },
+            ],
+          },
           name: result.manifest.metadata.name,
           node: result.manifest.spec.node,
         };
-      }
-      const disabled = ownsNode && !result.manifest.spec.enabled;
-      const action = disabled ? "stopped" : "started";
-      const savedPath = disabled
-        ? modelHostStoreMod.saveModelHost(result.manifest, workloadsDir)
-        : null;
-      return {
-        action,
-        path: savedPath,
-        status: {
-          phase: disabled ? "Stopped" : "Running",
-          serverPid: result.pid,
-          endpoint: result.endpoint,
-          lastTransitionTime: new Date().toISOString(),
-          conditions: [
-            {
-              type: "Applied",
-              status: "True",
-              reason: action,
-              lastTransitionTime: new Date().toISOString(),
-            },
-          ],
-        },
-        name: result.manifest.metadata.name,
-        node: result.manifest.spec.node,
-      };
-    });
-  });
+      });
+    }),
+  );
 }
 
 function readOwnedWorkloadToggle(
@@ -3675,6 +3693,36 @@ export const router = t.router({
       return await applyAgentWorkload(managed, signal, (dir) =>
         readOwnedWorkloadToggle(dir, ownsNode, input.workload, input.enabled),
       );
+    }),
+
+  modelHostNativeResidency: t.procedure
+    .input(
+      z.strictObject({
+        workload: ModelHostManifestSchema.shape.metadata.shape.name,
+        action: z.enum(["park", "resume"]),
+      }),
+    )
+    .mutation(async ({ ctx, input, signal }) => {
+      signal?.throwIfAborted();
+      const owner = ctx.managedLaunchAdmission;
+      const set = owner?.setNativeOmlxResidency;
+      const node = owner?.ownerNodeId;
+      if (set === undefined || node === undefined) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "ManagedNativeOmlxOwnerUnavailable",
+        });
+      }
+      return await withManagedManualMutation(node, async () => {
+        const outcome = await set(input.workload, input.action);
+        if (outcome === undefined) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "ManagedNativeOmlxOwnerUnavailable",
+          });
+        }
+        return outcome;
+      });
     }),
 
   modelHostStatus: t.procedure.input(modelHostStatusInput).query(async ({ input, ctx }) => {

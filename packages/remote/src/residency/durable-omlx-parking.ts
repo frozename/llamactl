@@ -1,15 +1,11 @@
 import { getResidencyLeaseRegistry, type ResidencyLeases } from "@llamactl/core/residency/leases";
-import {
-  type ManagedCapacityOptions,
-  type ManagedCapacitySample,
-  projectManagedCapacity,
-} from "@llamactl/core/resources/managed-capacity";
 import { isIP } from "node:net";
 import { isDeepStrictEqual } from "node:util";
 
 import type { AdmissionAuthority, NativeRuntimeGeneration } from "./admission-authority.js";
-import type { ClaimRow } from "./admission-store.js";
+import type { ClaimRow, NativeWakeLimits } from "./admission-store.js";
 import type { InferenceHoldState } from "./inference-holds.js";
+import type { ConnectOmlxOwnerSocket } from "./omlx-owner-socket.js";
 
 import {
   createOmlxNativeClient,
@@ -26,6 +22,8 @@ import { createOmlxOwnerFetch } from "./omlx-owner-http.js";
 
 type ParkedResult = { kind: "parked"; modelId: string; chargedGiB: number };
 type DurableUnloadResult = ParkedResult | Exclude<NativeUnloadResult, { reservation: "released" }>;
+export type NativeOmlxResidencyAction = "park" | "resume";
+export type NativeOmlxResidencyResult = DurableUnloadResult | NativeLoadResult;
 type Parked = { claim: ClaimRow; receipt: OmlxNativeUnloadReceipt };
 
 export interface DurableOmlxParkingOptions {
@@ -35,12 +33,12 @@ export interface DurableOmlxParkingOptions {
   authority: Pick<AdmissionAuthority, "snapshot" | "transitionNative">;
   runtime: NativeRuntimeGeneration;
   binding: OmlxNativeBinding;
+  connect: ConnectOmlxOwnerSocket;
   registry: ResidencyLeases;
   readInferenceHold: (workload: string) => InferenceHoldState;
   verifyExclusiveIngress: () => boolean;
   qualifiedResidualGiB: (receipt: OmlxNativeUnloadReceipt) => number | undefined;
-  readCapacity: () => ManagedCapacitySample | undefined;
-  capacityPolicy: () => ManagedCapacityOptions;
+  readLimits: () => NativeWakeLimits | undefined;
 }
 
 function sameClaim(current: ClaimRow | undefined, expected: ClaimRow): boolean {
@@ -106,6 +104,7 @@ class DurableOmlxParking {
   readonly #authenticated: boolean;
   #parked: Parked | undefined;
   #inFlight = false;
+  #approveWrite: (() => boolean) | undefined;
 
   constructor(private readonly opts: DurableOmlxParkingOptions) {
     this.#runtime = Object.freeze({ ...opts.runtime });
@@ -114,6 +113,11 @@ class DurableOmlxParking {
       endpoint: Object.freeze({ ...opts.binding.endpoint }),
     });
     this.#authenticated = opts.apiKey.trim().length > 0;
+    const endpoint = this.#binding.endpoint;
+    const read = createOmlxOwnerFetch(endpoint, { connect: opts.connect });
+    const write = createOmlxOwnerFetch(endpoint, {
+      connect: (signal) => this.#connectForWrite(signal),
+    });
     this.#client = createOmlxNativeClient({
       endpoint: this.#binding.endpoint,
       binding: this.#binding,
@@ -121,11 +125,29 @@ class DurableOmlxParking {
       activityObservable: opts.activityObservable,
       apiKey: opts.apiKey,
       readiness: opts.readiness,
-      fetch: createOmlxOwnerFetch(this.#binding.endpoint),
+      fetch: Object.assign(
+        (input: Request | URL | string, init?: RequestInit): Promise<Response> =>
+          (init?.method === "POST" ? write : read)(input, init),
+        { preconnect: read.preconnect },
+      ),
       leases: { registry: opts.registry, workload: this.#runtime.workload },
     });
     const { host } = this.#binding.endpoint;
     this.#privateBind = host === "::1" || (isIP(host) === 4 && host.startsWith("127."));
+  }
+
+  async #connectForWrite(signal?: AbortSignal | null): ReturnType<ConnectOmlxOwnerSocket> {
+    const socket = await this.opts.connect(signal);
+    try {
+      signal?.throwIfAborted();
+      if (this.#approveWrite?.() !== true) {
+        throw new Error("Managed native transition no longer authorizes dispatch");
+      }
+      return socket;
+    } catch (error) {
+      socket.destroy();
+      throw error;
+    }
   }
 
   #issuerCurrent(): boolean {
@@ -186,14 +208,19 @@ class DurableOmlxParking {
     this.#parked = undefined;
   }
 
-  async #confirmParked(held: Parked): Promise<DurableUnloadResult> {
-    const status = this.#parkCurrent(held) ? await this.#client.status() : undefined;
-    if (
-      status?.state === "discovered" &&
+  async #verifyParked(held: Parked, signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted || !this.#parkCurrent(held)) return false;
+    const status = await this.#client.status(signal);
+    return (
+      !signal?.aborted &&
+      status.state === "discovered" &&
       status.modelId === this.#binding.modelId &&
       this.#parkCurrent(held)
-    )
-      return parkedResult(held);
+    );
+  }
+
+  async #confirmParked(held: Parked): Promise<DurableUnloadResult> {
+    if (await this.#verifyParked(held)) return parkedResult(held);
     this.#invalidate(held);
     return unconfirmedUnload();
   }
@@ -202,10 +229,16 @@ class DurableOmlxParking {
     if (!this.#issuerCurrent() || !this.#ownsDrain(receipt, "draining")) return false;
     const claim = this.#claim();
     if (claim === undefined) return false;
-    attempt.started = this.opts.authority.transitionNative(this.#runtime, claim, {
+    const started = this.opts.authority.transitionNative(this.#runtime, claim, {
       kind: "begin-park",
     });
-    return attempt.started !== undefined;
+    if (started === undefined) return false;
+    attempt.started = started;
+    this.#approveWrite = (): boolean =>
+      this.#issuerCurrent() &&
+      this.#ownsDrain(receipt, "draining") &&
+      sameClaim(this.#claim(), started);
+    return true;
   }
 
   #commitPark(attempt: ParkAttempt, receipt: OmlxNativeUnloadReceipt): boolean {
@@ -278,22 +311,31 @@ class DurableOmlxParking {
     ) {
       return false;
     }
-    const { authority, readCapacity, capacityPolicy } = this.opts;
-    const limits = projectManagedCapacity(readCapacity(), {
-      ...capacityPolicy(),
-      maxSwapUsedGiB: 0,
-    });
-    if (!limits.ok || !this.#parkCurrent(held)) return false;
+    const { authority, readLimits } = this.opts;
+    const limits = readLimits();
+    if (limits === undefined || !this.#parkCurrent(held)) return false;
     attempt.reserved = authority.transitionNative(this.#runtime, held.claim, {
       kind: "reserve",
       limits,
     });
-    if (attempt.reserved === undefined) return false;
-    attempt.dispatched = authority.transitionNative(this.#runtime, attempt.reserved, {
-      kind: "dispatch",
-      limits,
-    });
-    return attempt.dispatched !== undefined;
+    const reserved = attempt.reserved;
+    if (reserved === undefined) return false;
+    this.#approveWrite = (): boolean => {
+      const fresh = readLimits();
+      if (
+        fresh === undefined ||
+        !this.#issuerCurrent() ||
+        !this.#ownsDrain(held.receipt, "unloaded") ||
+        !sameClaim(this.#claim(), reserved)
+      )
+        return false;
+      attempt.dispatched = authority.transitionNative(this.#runtime, reserved, {
+        kind: "dispatch",
+        limits: fresh,
+      });
+      return attempt.dispatched !== undefined;
+    };
+    return true;
   }
 
   async #loadParked(held: Parked): Promise<NativeLoadResult> {
@@ -346,8 +388,15 @@ class DurableOmlxParking {
     try {
       return await operation();
     } finally {
+      this.#approveWrite = undefined;
       this.#inFlight = false;
     }
+  }
+
+  async verifyParked(signal?: AbortSignal): Promise<boolean> {
+    const held = this.#parked;
+    if (held === undefined || this.#inFlight) return false;
+    return (await this.#verifyParked(held, signal)) && !this.#inFlight;
   }
 
   validateParkedCredit(claim: Readonly<ClaimRow>): boolean {
@@ -377,6 +426,6 @@ class DurableOmlxParking {
 /** Same-claim native transitions for an owner-exclusive, pinned oMLX listener. */
 export function createDurableOmlxParking(
   opts: DurableOmlxParkingOptions,
-): Pick<DurableOmlxParking, "unload" | "load" | "validateParkedCredit"> {
+): Pick<DurableOmlxParking, "unload" | "load" | "validateParkedCredit" | "verifyParked"> {
   return new DurableOmlxParking(opts);
 }
